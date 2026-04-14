@@ -1,18 +1,23 @@
 # Railway deploy configuration.
 #
-# Single service, single container, single process: Streamlit. Railway
-# probes Streamlit's native /_stcore/health endpoint as the healthcheck.
+# This file describes the DEFAULT service (affiliate-ui = Streamlit).
+# The project is meant to have TWO services deployed from the same repo:
 #
-# Attach a Railway Volume to this service at mount path /data. The app
-# reads DATA_DIR=/data from environment (set it in Variables) to locate
-# the persistent affiliate.duckdb file.
+#   affiliate-ui    default Dockerfile CMD → Streamlit on $PORT
+#                   healthcheck: /_stcore/health
 #
-# The FastAPI-owned public routes (/r/{slug}, /bp/{slug}, /mailerlite/*)
-# are NOT reachable from this deploy — they only work when uvicorn is
-# running, which it isn't here. See Dockerfile header for the rationale.
+#   affiliate-api   Custom Start Command override (set in Railway UI):
+#                     sh -c "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+#                   healthcheck: /health
 #
-# Environment variables set in the Railway dashboard — see .env.example
-# for the full list.
+# Both services share a single Railway Postgres addon via the
+# DATABASE_URL env var (Railway injects it automatically when you attach
+# the addon and reference it under Variables → Add Reference).
+#
+# When DATABASE_URL is set, backend/app/db.py switches from DuckDB to
+# Postgres via its built-in adapter. No Volume is needed.
+#
+# Full step-by-step: see DEPLOY.md.
 
 [build]
 builder = "DOCKERFILE"

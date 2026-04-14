@@ -1,23 +1,44 @@
-"""DuckDB persistence layer.
+"""Dual-backend persistence layer.
 
-DuckDB chosen over SQLite because the core workload is OLAP (rank, window,
-join scraped snapshots over time). One file on disk, zero server, columnar
-storage, Parquet-compatible. Postgres migration path: replace this module
-with a SQLAlchemy engine pointed at Railway Postgres — the rest of the app
-talks to the `ProductRepository` interface, not raw DuckDB.
+Two backends share one interface:
+
+1. **DuckDB** (local dev): zero-server, OLAP-friendly, columnar. Default
+   when `DATABASE_URL` is not set. The `affiliate.duckdb` file lives at
+   `$DATA_DIR` (repo root locally).
+2. **Postgres** (production): picked up automatically when `DATABASE_URL`
+   is set (Railway injects this when you attach a Postgres addon). Enables
+   running the Streamlit UI and the FastAPI public routes as two separate
+   services backed by the same database — which the single-Volume
+   limitation of Railway's free tier blocks for DuckDB.
+
+The `_Connection` adapter at the top of this module exposes a small
+DuckDB-like API (`.execute(sql, params)` returning a result with
+`.fetchone()` / `.fetchall()`, plus `.executemany()` and `.close()`).
+Repository code below uses this adapter exclusively, so switching backends
+requires zero changes inside the repositories — only the connection
+construction.
+
+SQL portability notes:
+- Placeholders are `?` (DuckDB native); the Postgres adapter rewrites them
+  to `%s` before calling psycopg.
+- `DOUBLE` columns are translated to `DOUBLE PRECISION` for Postgres.
+- `JSON` columns become `TEXT` under Postgres; we serialize/deserialize
+  at the app layer (same as DuckDB). No JSONB querying is needed.
+- Datetime objects are passed through unchanged — both drivers accept
+  native `datetime.datetime` for TIMESTAMP columns.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, Sequence
 
 import duckdb
-
-from datetime import datetime, timezone
 
 from .models import (
     AffiliateLink,
@@ -44,10 +65,163 @@ from .models import (
 )
 
 
-# DuckDB file path. In production (Railway) a persistent volume is mounted at
-# $DATA_DIR and both the api and ui services point at the same file. Locally
-# this falls through to the repo root so existing dev workflow is untouched.
+def _use_postgres() -> bool:
+    return bool(os.environ.get("DATABASE_URL"))
+
+
+# DuckDB file path. In production Railway uses Postgres and this is unused;
+# locally it falls through to the repo root so existing dev workflow is
+# untouched.
 _DEFAULT_DB_PATH = Path(os.environ.get("DATA_DIR", ".")) / "affiliate.duckdb"
+
+
+# --- Connection adapter ---------------------------------------------------
+
+
+def _translate_placeholders(sql: str) -> str:
+    """Rewrite `?` placeholders to `%s` for psycopg, skipping quoted
+    strings so a literal `?` inside a string literal isn't corrupted."""
+    out: list[str] = []
+    i = 0
+    in_single = False
+    in_double = False
+    while i < len(sql):
+        c = sql[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            out.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            out.append(c)
+        elif c == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+class _Result:
+    """Wraps a result object that has `.fetchone()` and `.fetchall()`.
+    Both DuckDB's execute() and psycopg's cursor expose those methods;
+    this class is just a common parent for typing."""
+
+    def __init__(self, underlying: Any) -> None:
+        self._u = underlying
+
+    def fetchone(self) -> tuple | None:
+        return self._u.fetchone()
+
+    def fetchall(self) -> list[tuple]:
+        return self._u.fetchall()
+
+
+class _Connection:
+    """Thin DuckDB-shaped API over either DuckDB or Postgres.
+
+    The repositories only call `.execute`, `.executemany`, and `.close`.
+    Returning a `_Result` from `.execute` lets the repository code chain
+    `.fetchone()` / `.fetchall()` the same way it did against DuckDB.
+    """
+
+    def execute(self, sql: str, params: Sequence | None = None) -> _Result:
+        raise NotImplementedError
+
+    def executemany(self, sql: str, params_list: Sequence[Sequence]) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class _DuckDBConnection(_Connection):
+    def __init__(self, con: duckdb.DuckDBPyConnection) -> None:
+        self._con = con
+
+    def execute(self, sql: str, params: Sequence | None = None) -> _Result:
+        if params is None:
+            return _Result(self._con.execute(sql))
+        return _Result(self._con.execute(sql, list(params)))
+
+    def executemany(self, sql: str, params_list: Sequence[Sequence]) -> None:
+        self._con.executemany(sql, [list(p) for p in params_list])
+
+    def close(self) -> None:
+        self._con.close()
+
+
+class _PostgresConnection(_Connection):
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+        self._last_cursor: Any | None = None
+
+    def execute(self, sql: str, params: Sequence | None = None) -> _Result:
+        cur = self._conn.cursor()
+        cur.execute(_translate_placeholders(sql), tuple(params or ()))
+        self._conn.commit()
+        self._last_cursor = cur
+        return _Result(cur)
+
+    def executemany(self, sql: str, params_list: Sequence[Sequence]) -> None:
+        cur = self._conn.cursor()
+        cur.executemany(
+            _translate_placeholders(sql), [tuple(p) for p in params_list]
+        )
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def _open_connection(db_path: str) -> _Connection:
+    """Open and return a backend-appropriate connection. The returned
+    object is already schema-initialized (idempotent CREATE TABLE IF NOT
+    EXISTS runs on every open, same as the original DuckDB behavior)."""
+    if _use_postgres():
+        import psycopg
+
+        conn = psycopg.connect(os.environ["DATABASE_URL"])
+        adapter: _Connection = _PostgresConnection(conn)
+        adapter.execute(_schema_for_backend())
+        if hasattr(adapter, "_conn"):
+            adapter._conn.commit()  # type: ignore[attr-defined]
+        return adapter
+
+    duck = duckdb.connect(db_path)
+    adapter = _DuckDBConnection(duck)
+    adapter.execute(_schema_for_backend())
+    return adapter
+
+
+def _schema_for_backend() -> str:
+    """Translate the DuckDB schema to Postgres-compatible SQL if needed.
+    The translations are narrow on purpose — only the type-name and JSON
+    differences that actually matter in our tables."""
+    if not _use_postgres():
+        return _SCHEMA
+    translated = _SCHEMA
+    # DOUBLE (DuckDB) → DOUBLE PRECISION (Postgres standard).
+    translated = re.sub(r"\bDOUBLE\b(?!\s+PRECISION)", "DOUBLE PRECISION", translated)
+    # JSON → TEXT (we serialize/deserialize at the app layer).
+    translated = re.sub(r"\bJSON\b", "TEXT", translated)
+    return translated
+
+
+@contextmanager
+def _connect_cm(db_path: str) -> Iterator[_Connection]:
+    """Module-level connection context manager.
+
+    All repositories below use this via a thin per-class `_connect`. The
+    per-class indirection is kept so Streamlit's cached repository
+    instances can still hold a `_db_path` and each call opens/closes a
+    fresh connection — both DuckDB (SQLite-like) and psycopg prefer
+    short-lived connections over a shared long-lived one.
+    """
+    con = _open_connection(db_path)
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 _SCHEMA = """
@@ -214,21 +388,17 @@ class ProductRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        # Run schema creation on every connection. Idempotent (CREATE TABLE
-        # IF NOT EXISTS) and cheap. Protects against the file being deleted
-        # out from under a cached repository instance — without this,
+    def _connect(self) -> Iterator[_Connection]:
+        # Schema creation runs on every connection open via _connect_cm.
+        # Idempotent (CREATE TABLE IF NOT EXISTS) and cheap. Protects
+        # against the DuckDB file being deleted out from under a cached
+        # repository instance — without the per-connect schema apply,
         # Streamlit's @st.cache_resource plus a manual `rm affiliate.duckdb`
         # leaves the repo holding a path to a file that has no schema, and
-        # DuckDB's replacement scan then tries to interpret local Python
-        # variables named like table names (e.g. `items`) as data sources
-        # and fails with a cryptic error.
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+        # DuckDB's replacement scan then misinterprets local Python
+        # variables as data sources with a cryptic error.
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert_products(self, items: list[Product]) -> int:
         # Parameter is named `items` (not `products`) to avoid colliding with
@@ -388,13 +558,9 @@ class LinkRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, link: AffiliateLink) -> None:
         row = (
@@ -489,13 +655,9 @@ class ManagedProductRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, mp: ManagedProduct) -> None:
         row = (
@@ -572,13 +734,9 @@ class OperatorProfileRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def get(self) -> OperatorProfile | None:
         with self._connect() as con:
@@ -607,13 +765,9 @@ class ShortLinkRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, link: ShortLink) -> None:
         with self._connect() as con:
@@ -706,13 +860,9 @@ class ClickEventRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def log(self, event: ClickEvent) -> None:
         with self._connect() as con:
@@ -790,13 +940,9 @@ class ChannelConfigRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, cfg: ChannelConfig) -> None:
         with self._connect() as con:
@@ -858,13 +1004,9 @@ class BridgePageRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, page: BridgePage) -> None:
         with self._connect() as con:
@@ -938,13 +1080,9 @@ class EmailSequenceRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def upsert(self, seq: EmailSequence) -> None:
         with self._connect() as con:
@@ -1029,13 +1167,9 @@ class SubscriberCountRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def save(self, snap: SubscriberCountSnapshot) -> None:
         with self._connect() as con:
@@ -1083,13 +1217,9 @@ class GeneratedCreativeRepository:
             pass
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(self._db_path)
-        try:
-            con.execute(_SCHEMA)
+    def _connect(self) -> Iterator[_Connection]:
+        with _connect_cm(self._db_path) as con:
             yield con
-        finally:
-            con.close()
 
     def insert(self, asset: GeneratedCreative) -> None:
         with self._connect() as con:
