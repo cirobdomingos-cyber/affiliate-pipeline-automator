@@ -21,6 +21,13 @@ import streamlit as st
 # Allow `streamlit run ui/streamlit_app.py` from repo root without install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Start the lightweight health-check server on port 8001 so Railway's
+# healthcheck can verify the process is alive independently of Streamlit's
+# own initialisation. Must happen before st.set_page_config.
+from ui.health_server import start_health_server  # noqa: E402
+
+start_health_server()
+
 import uuid  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 
