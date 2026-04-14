@@ -21,7 +21,14 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app.db import LinkRepository, ProductRepository  # noqa: E402
-from backend.app.models import LinkStatus, Platform, UTMParams  # noqa: E402
+from backend.app.models import (  # noqa: E402
+    ORGANIC_CHANNELS,
+    PAID_CHANNELS,
+    LinkStatus,
+    Platform,
+    TrafficChannel,
+    UTMParams,
+)
 from backend.app.services.discovery import run_discovery  # noqa: E402
 from backend.app.services.link_vault import add_link, compose_tracked_url  # noqa: E402
 
@@ -125,8 +132,8 @@ with st.sidebar:
                 st.warning(err)
 
 
-tab_top, tab_browse, tab_links = st.tabs(
-    ["Top picks", "Browse persisted catalog", "Link Vault"]
+tab_top, tab_browse, tab_links, tab_traffic = st.tabs(
+    ["Top picks", "Browse persisted catalog", "Link Vault", "Traffic Plan"]
 )
 
 with tab_top:
@@ -319,3 +326,129 @@ with tab_links:
                             tracked = compose_tracked_url(link, utm)
                             st.code(tracked.final_url, language="text")
                             st.caption("Values are normalized automatically — 'Instagram Bio' → 'instagram-bio'.")
+
+
+with tab_traffic:
+    st.subheader("Stage 3 — Traffic Plan")
+    st.caption(
+        "Generate an organic content calendar (Sonnet) and paid ad variants (Haiku) "
+        "for a product from your catalog. Requires ANTHROPIC_API_KEY."
+    )
+
+    persisted_products = repo.top_products(limit=100)
+    if not persisted_products:
+        st.info("No products persisted yet. Run discovery first.")
+    else:
+        product_labels = {
+            sp.product.id: f"{sp.product.name} · {sp.product.platform.value} · R${sp.product.price_brl or 0:.0f}"
+            for sp in persisted_products
+        }
+        selected_id = st.selectbox(
+            "Pick a product",
+            options=list(product_labels.keys()),
+            format_func=lambda pid: product_labels[pid],
+        )
+        selected_product = next(
+            sp.product for sp in persisted_products if sp.product.id == selected_id
+        )
+
+        tp_audience = st.text_input(
+            "Target audience",
+            placeholder="e.g. First-year affiliates in Brazil, 25–35, struggling to make their first sale",
+        )
+
+        organic_col, paid_col = st.columns(2)
+
+        with organic_col:
+            st.markdown("**Organic plan (Sonnet 4.6)**")
+            organic_channels = st.multiselect(
+                "Organic channels",
+                options=[c.value for c in ORGANIC_CHANNELS],
+                default=[TrafficChannel.INSTAGRAM_REEL.value, TrafficChannel.TIKTOK.value],
+                format_func=lambda v: v.replace("_", " ").title(),
+            )
+            plan_days = st.slider("Plan horizon (days)", 3, 30, 7)
+            if st.button("Generate organic plan", type="primary", use_container_width=True):
+                if not tp_audience:
+                    st.error("Target audience is required.")
+                elif not organic_channels:
+                    st.error("Pick at least one channel.")
+                else:
+                    try:
+                        from backend.app.traffic_planner import build_default_traffic_planner
+                        planner = build_default_traffic_planner()
+                        with st.spinner("Sonnet is writing your content plan..."):
+                            plan = planner.plan_organic(
+                                product=selected_product,
+                                target_audience=tp_audience,
+                                channels=[TrafficChannel(c) for c in organic_channels],
+                                days=plan_days,
+                            )
+                        st.session_state["last_organic_plan"] = plan
+                    except Exception as e:
+                        st.error(f"Organic plan failed: {e}")
+
+        with paid_col:
+            st.markdown("**Paid ad variants (Haiku 4.5)**")
+            ad_platform = st.selectbox(
+                "Ad platform",
+                options=[c.value for c in PAID_CHANNELS],
+                format_func=lambda v: v.replace("_", " ").title(),
+            )
+            variant_count = st.slider("Number of variants", 3, 10, 5)
+            if st.button("Generate ad variants", type="primary", use_container_width=True):
+                if not tp_audience:
+                    st.error("Target audience is required.")
+                else:
+                    try:
+                        from backend.app.traffic_planner import build_default_traffic_planner
+                        planner = build_default_traffic_planner()
+                        with st.spinner("Haiku is writing ad copy variants..."):
+                            variants = planner.generate_ad_variants(
+                                product=selected_product,
+                                target_audience=tp_audience,
+                                platform=TrafficChannel(ad_platform),
+                                count=variant_count,
+                            )
+                        st.session_state["last_ad_variants"] = variants
+                    except Exception as e:
+                        st.error(f"Ad variant generation failed: {e}")
+
+        plan = st.session_state.get("last_organic_plan")
+        if plan:
+            st.divider()
+            st.markdown("### Organic plan")
+            st.markdown(f"**Target audience:** {plan.target_audience}")
+            st.markdown(f"**Positioning:** {plan.positioning}")
+            st.markdown(f"**Posting rhythm:** {plan.posting_rhythm}")
+            st.markdown("**Key messages:**")
+            for msg in plan.key_messages:
+                st.markdown(f"- {msg}")
+            st.markdown(f"**Content calendar ({len(plan.briefs)} posts)**")
+            for brief in plan.briefs:
+                with st.container(border=True):
+                    st.markdown(
+                        f"**Day {brief.day_offset} · {brief.channel.value.replace('_', ' ').title()}**"
+                    )
+                    st.markdown(f"**Hook:** {brief.hook}")
+                    st.markdown(f"**Body:** {brief.body}")
+                    st.markdown(f"**CTA:** {brief.call_to_action}")
+                    if brief.hashtags:
+                        st.caption(" ".join(f"#{h}" for h in brief.hashtags))
+                    if brief.format_notes:
+                        st.caption(f"Format: {brief.format_notes}")
+
+        variants = st.session_state.get("last_ad_variants")
+        if variants:
+            st.divider()
+            st.markdown("### Paid ad variants")
+            for i, v in enumerate(variants, start=1):
+                with st.container(border=True):
+                    st.markdown(f"**Variant {i} · {v.platform.value.replace('_', ' ').title()}**")
+                    st.markdown(f"**Headline:** {v.headline}")
+                    st.markdown(f"**Primary text:** {v.primary_text}")
+                    st.markdown(f"**Description:** {v.description}")
+                    st.caption(f"Audience: {v.target_audience}")
+                    st.caption(f"Daily budget: R$ {v.daily_budget_brl:.0f}")
+                    if v.creative_notes:
+                        st.caption(f"Creative: {v.creative_notes}")

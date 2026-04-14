@@ -199,3 +199,92 @@ class TrackedLink(BaseModel):
     affiliate_link_id: str
     final_url: str
     utm: UTMParams
+
+
+class TrafficChannel(StrEnum):
+    """Channels an affiliate can use to drive traffic.
+
+    Organic channels live in ContentBrief; paid channels live in AdCopyVariant.
+    Keeping them in one enum means the UI can show a single 'pick a channel'
+    selector that fans out to the right LLM path.
+    """
+
+    INSTAGRAM_REEL = "instagram_reel"
+    INSTAGRAM_CAROUSEL = "instagram_carousel"
+    INSTAGRAM_STORY = "instagram_story"
+    TIKTOK = "tiktok"
+    YOUTUBE_LONG = "youtube_long"
+    YOUTUBE_SHORT = "youtube_short"
+    BLOG_POST = "blog_post"
+    WHATSAPP_BROADCAST = "whatsapp_broadcast"
+    META_AD = "meta_ad"
+    GOOGLE_AD = "google_ad"
+    TIKTOK_AD = "tiktok_ad"
+
+
+ORGANIC_CHANNELS: set[TrafficChannel] = {
+    TrafficChannel.INSTAGRAM_REEL,
+    TrafficChannel.INSTAGRAM_CAROUSEL,
+    TrafficChannel.INSTAGRAM_STORY,
+    TrafficChannel.TIKTOK,
+    TrafficChannel.YOUTUBE_LONG,
+    TrafficChannel.YOUTUBE_SHORT,
+    TrafficChannel.BLOG_POST,
+    TrafficChannel.WHATSAPP_BROADCAST,
+}
+
+PAID_CHANNELS: set[TrafficChannel] = {
+    TrafficChannel.META_AD,
+    TrafficChannel.GOOGLE_AD,
+    TrafficChannel.TIKTOK_AD,
+}
+
+
+class ContentBrief(BaseModel):
+    """A single organic post brief — one row on the content calendar."""
+
+    channel: TrafficChannel
+    day_offset: int = Field(ge=0, description="Day number in the plan (0-indexed).")
+    hook: str = Field(description="Opening 1–2 sentences that stop the scroll.")
+    body: str = Field(description="Main content — 3–5 sentences of what to say.")
+    call_to_action: str = Field(description="Exactly what the viewer should do next.")
+    hashtags: list[str] = Field(default_factory=list, description="5–10 relevant hashtags, no # prefix.")
+    format_notes: str = Field(
+        default="",
+        description="Production hints — 'vertical video, 15s, text overlay', etc.",
+    )
+
+
+class OrganicPlan(BaseModel):
+    """Complete organic strategy + content calendar for a product.
+
+    The `target_audience`, `positioning`, and `key_messages` fields are the
+    strategy doc — written once, reused across every brief. The `briefs` list
+    is the calendar. Keeping them in one object means the LLM produces a
+    cohesive plan in a single call rather than stitching together unrelated
+    posts.
+    """
+
+    target_audience: str
+    positioning: str
+    key_messages: list[str]
+    posting_rhythm: str
+    briefs: list[ContentBrief]
+
+
+class AdCopyVariant(BaseModel):
+    """A single paid-ad creative variant."""
+
+    platform: TrafficChannel
+    headline: str = Field(description="Max 40 chars — the scroll-stopper.")
+    primary_text: str = Field(description="The main body of the ad — 2–4 sentences.")
+    description: str = Field(description="Supporting text below primary — 1 sentence.")
+    target_audience: str = Field(description="Who this variant is aimed at.")
+    daily_budget_brl: float = Field(ge=0, description="Suggested daily spend in BRL.")
+    creative_notes: str = Field(default="", description="Hook, angle, creative direction.")
+
+
+class AdVariantBatch(BaseModel):
+    """Wrapper so a single LLM call can return many ad variants."""
+
+    variants: list[AdCopyVariant]

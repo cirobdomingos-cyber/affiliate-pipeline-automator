@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from .api.links import router as links_router
 from .api.products import router as products_router
+from .api.traffic import router as traffic_router
 
 app = FastAPI(
     title="Affiliate Pipeline Automator",
@@ -18,6 +19,7 @@ app = FastAPI(
 
 app.include_router(products_router)
 app.include_router(links_router)
+app.include_router(traffic_router)
 
 
 @app.get("/health", tags=["meta"])
