@@ -178,6 +178,21 @@ class ProductRepository:
             )
         return len(scores)
 
+    def clear_catalog(self) -> int:
+        """Wipe every product and product_score row. Returns rows deleted.
+
+        Used by the 'Clear catalog' button in the UI — and by anyone who
+        wants to reset the discovery state without deleting the DB file on
+        disk (which is fragile when the repo is cached by Streamlit).
+        The affiliate_links table is NOT touched — the vault is user work,
+        not scrape output.
+        """
+        with self._connect() as con:
+            before = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+            con.execute("DELETE FROM product_scores")
+            con.execute("DELETE FROM products")
+        return int(before)
+
     def top_products(self, limit: int = 25) -> list[ScoredProduct]:
         query = """
         SELECT

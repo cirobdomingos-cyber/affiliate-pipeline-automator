@@ -64,10 +64,12 @@ with st.sidebar:
     st.header("Discovery")
     use_mock = st.toggle(
         "Use mock data",
-        value=True,
+        value=False,
         help=(
-            "On: use a deterministic fixture (recommended for demo). "
-            "Off: hit live Hotmart marketplace — may break if selectors drift."
+            "On: use fixture data for demos. Mock data is NOT persisted — it "
+            "lives in the Top picks tab only. "
+            "Off: hit the live sources (Hotmart Next.js hydration + Amazon "
+            "PA-API if credentials are set); results are persisted to DuckDB."
         ),
     )
     limit = st.slider("Products per source", min_value=10, max_value=200, value=50, step=10)
@@ -130,6 +132,28 @@ with st.sidebar:
         if result.errors:
             for err in result.errors:
                 st.warning(err)
+
+    st.divider()
+    st.subheader("Catalog maintenance")
+    persisted_count = len(repo.top_products(limit=10_000))
+    st.caption(f"{persisted_count} products currently in the persisted catalog.")
+    if persisted_count > 0:
+        confirm = st.checkbox(
+            "I understand this will delete all persisted products and scores",
+            key="confirm_clear",
+        )
+        if st.button(
+            "Clear catalog",
+            type="secondary",
+            use_container_width=True,
+            disabled=not confirm,
+        ):
+            deleted = repo.clear_catalog()
+            st.session_state.pop("last_result", None)
+            st.success(f"Cleared {deleted} products from the catalog.")
+            st.rerun()
+    else:
+        st.caption(":gray[Nothing to clear.]")
 
 
 tab_top, tab_browse, tab_analytics, tab_links, tab_traffic = st.tabs(

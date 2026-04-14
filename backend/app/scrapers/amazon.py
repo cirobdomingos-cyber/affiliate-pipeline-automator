@@ -376,6 +376,12 @@ class MockAmazonScraper(ScraperProtocol):
 
     Paired with MockScraper (Hotmart) to give the demo two-platform data
     without requiring Associates credentials.
+
+    Tags every product's `raw.source` as `amazon_mock_fixture` (not
+    `amazon_paapi_search_items`) so mock rows are distinguishable from
+    real live PA-API data after persistence. Without this, the two would
+    be indistinguishable in DuckDB and "clean mock data from the catalog"
+    would be impossible without wiping real rows too.
     """
 
     platform = Platform.AMAZON
@@ -390,4 +396,7 @@ class MockAmazonScraper(ScraperProtocol):
             / "amazon_search_response.json"
         )
         payload = json.loads(fixture_path.read_text(encoding="utf-8"))
-        return parse_search_response(payload, limit=limit)
+        products = parse_search_response(payload, limit=limit)
+        for p in products:
+            p.raw["source"] = "amazon_mock_fixture"
+        return products

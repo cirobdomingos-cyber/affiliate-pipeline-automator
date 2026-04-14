@@ -133,11 +133,18 @@ async def run_discovery(
             logger.warning("LLM niche-fit ranking failed: %s", exc)
             errors.append(f"llm niche-fit: {exc}")
 
-    repo.upsert_products(all_products)
+    # Mock data stays in-memory only. Persisting it would pollute the
+    # "live catalog" analytics with hand-crafted fixture rows that the
+    # operator has no business making link-vault or traffic-plan decisions
+    # against. The Top picks tab still works in mock mode because it reads
+    # `result.top` from session state, not from the DB.
+    if not use_mock:
+        repo.upsert_products(all_products)
 
     ranked = rank_products(all_products, weights=weights)
     scores = [score for _, score in ranked]
-    repo.replace_scores(scores)
+    if not use_mock:
+        repo.replace_scores(scores)
 
     if niche_rankings:
         fit_by_id = {nf.product_id: nf.fit_score for nf in niche_rankings}
