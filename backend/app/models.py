@@ -25,6 +25,7 @@ class Platform(StrEnum):
     MAGALU = "magalu"
     HOSTINGER = "hostinger"
     SEMRUSH = "semrush"
+    DIRECT = "direct"
 
 
 class Niche(StrEnum):
@@ -288,3 +289,238 @@ class AdVariantBatch(BaseModel):
     """Wrapper so a single LLM call can return many ad variants."""
 
     variants: list[AdCopyVariant]
+
+
+class CreativeBrief(BaseModel):
+    """A ready-to-paste prompt pair (image + video) for one ad variant.
+
+    Designed around the 2026 SOTA: Ideogram v3 for static images (only tool
+    that renders Portuguese headlines cleanly) and Veo 3 / Runway Gen-4 for
+    short video. Fields are deliberately plain strings rather than tool-
+    specific schemas so the operator can paste them verbatim.
+
+    The `ready_tools` hint tells the UI which external tool each prompt is
+    calibrated for, and also doubles as the dispatch key when we later add
+    direct API generation via `services/creatives.py`.
+    """
+
+    variant_index: int = Field(ge=0, description="Index back into the AdCopyVariant list.")
+    platform: TrafficChannel
+    aspect_ratio: str = Field(description="e.g. '9:16' for Reels, '1:1' for feed, '16:9' for YouTube.")
+    image_prompt: str = Field(
+        description="Ideogram v3 / Midjourney compatible prompt. Must include any on-image text verbatim."
+    )
+    image_tool: str = Field(default="ideogram", description="Recommended image tool for this prompt.")
+    video_prompt: str = Field(
+        description="Veo 3 / Runway Gen-4 compatible prompt — shot list, camera, 5–8 seconds."
+    )
+    video_tool: str = Field(default="veo3", description="Recommended video tool for this prompt.")
+    video_duration_s: int = Field(default=8, ge=3, le=15)
+
+
+class CreativeBriefBatch(BaseModel):
+    """Wrapper so one LLM call can produce briefs for every ad variant at once."""
+
+    briefs: list[CreativeBrief]
+
+
+class GeneratedCreative(BaseModel):
+    """A concrete image/video produced for one ad variant via an external API.
+
+    Persisted so that refreshing Phase 3 doesn't re-bill. `product_id` is a
+    loose string key — can point at either a scraped Product or a
+    ManagedProduct; we don't enforce FKs anywhere else in this app either.
+    The cost field is optional because fal.ai's response sometimes omits it;
+    when present we aggregate it on the KPIs tab as "creative spend".
+    """
+
+    id: str
+    product_id: str
+    variant_index: int = Field(ge=0)
+    kind: str  # 'image' | 'video'
+    asset_url: str
+    source_prompt: str
+    model: str
+    cost_brl: float | None = Field(default=None, ge=0)
+    width: int | None = None
+    height: int | None = None
+    duration_s: int | None = None
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ManagedProduct(BaseModel):
+    """A product the operator is actively promoting — manually curated.
+
+    Distinct from `Product` (which is scraper output): `ManagedProduct` is the
+    operator's working catalog. Each row drives the rest of the affiliate
+    module (channels, bridge pages, email sequences, KPIs, scale checklist).
+    Keeping it separate from the scrape catalog means a manual entry is never
+    overwritten by a re-scrape, and the scrape pipeline stays idempotent.
+    """
+
+    model_config = ConfigDict(frozen=False)
+
+    id: str
+    name: str
+    platform: Platform
+    niche: Niche
+    commission_pct: float = Field(ge=0, le=100)
+    ticket_brl: float = Field(ge=0)
+    sales_page_url: str | None = None
+    affiliate_url: str
+    quality_score: float = Field(ge=0, le=100)
+    epc_actual: float | None = Field(default=None, ge=0)
+    cpv_actual: float | None = Field(default=None, ge=0)
+    notes: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def recommended(self) -> bool:
+        return self.quality_score > 70.0
+
+
+class OperatorProfile(BaseModel):
+    """Single-row onboarding preference. The operator's declared primary niche
+    drives default filters on dashboards and LLM prompts downstream."""
+
+    primary_niche: Niche
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ShortLink(BaseModel):
+    """Operator-owned tracked redirect: /r/{slug} → destination_url.
+
+    The slug is the public identifier — short, memorable, and used as the PK.
+    `destination_url` already has UTMs baked in (we compose them at creation
+    time rather than at redirect time, so the destination link is testable
+    outside the click handler).
+    """
+
+    slug: str
+    managed_product_id: str
+    destination_url: str
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ClickEvent(BaseModel):
+    """Append-only click log — powers Stage 2 stats and Stage 6 KPIs.
+
+    `target_type` splits short-link clicks from bridge-page CTA clicks so we
+    can compute bridge conversion as (bridge_cta / short_link) without
+    joining multiple tables. `ip_prefix` keeps only the first 3 octets per
+    the brief (LGPD-friendly). `ua_family` is a coarse bucket, not a full
+    user-agent string.
+    """
+
+    id: str
+    target_type: str  # 'short_link' | 'bridge_cta'
+    target_id: str  # slug for short_link; bridge page slug for bridge_cta
+    managed_product_id: str
+    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ip_prefix: str | None = None
+    ua_family: str | None = None
+    utm_source: str | None = None
+
+
+class ShortLinkStats(BaseModel):
+    """Aggregate view of a short link's clicks."""
+
+    slug: str
+    total_clicks: int
+    unique_clicks: int  # distinct ip_prefix
+    last_click_at: datetime | None = None
+    by_utm_source: dict[str, int] = Field(default_factory=dict)
+
+
+class ChannelStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+
+
+class ChannelConfig(BaseModel):
+    """Per-product traffic channel configuration (Stage 3).
+
+    One row per (product, channel) pair — enforced at DB level. Organic
+    channels leave `daily_budget_brl` null; paid channels require it. The
+    stale-alert logic in the API only inspects paid channels with status
+    ACTIVE, so pausing a channel is the operator's opt-out from the alert.
+    """
+
+    id: str
+    managed_product_id: str
+    channel: TrafficChannel
+    status: ChannelStatus = ChannelStatus.ACTIVE
+    daily_budget_brl: float | None = Field(default=None, ge=0)
+    daily_click_goal: int | None = Field(default=None, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class StaleChannelAlert(BaseModel):
+    """One line item on the alerts panel — a paid channel running without
+    clicks in the last 24h."""
+
+    managed_product_id: str
+    managed_product_name: str
+    channel: TrafficChannel
+    daily_budget_brl: float | None
+    clicks_last_24h: int
+
+
+class BridgePage(BaseModel):
+    """Standalone landing page rendered at /bp/{slug}.
+
+    Minimal content shape intentionally — a bridge page is pre-sell, not a
+    full sales letter. If the operator wants a full sales letter the
+    destination is the producer's page, which is where `cta_url` points.
+    """
+
+    slug: str
+    managed_product_id: str
+    headline: str
+    subheadline: str | None = None
+    bullets: list[str] = Field(default_factory=list, max_length=5)
+    cta_text: str
+    cta_url: str
+    primary_color: str = "#2563eb"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EmailSequenceStep(BaseModel):
+    """One email in a nurture sequence. `delay_days` is measured from the
+    previous step (or from opt-in, if this is step 0)."""
+
+    id: str
+    sequence_id: str
+    step_order: int = Field(ge=0, le=6)  # up to 7 (0..6)
+    delay_days: int = Field(ge=0)
+    subject: str
+    body: str
+
+
+class EmailSequence(BaseModel):
+    """A named multi-email nurture sequence for a single managed product.
+    Persisted here so a future scheduler (APScheduler, Celery, etc.) can fire
+    the steps without the operator rewriting them."""
+
+    id: str
+    managed_product_id: str
+    name: str
+    mailerlite_group_id: str | None = None
+    steps: list[EmailSequenceStep] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SubscriberCountSnapshot(BaseModel):
+    """Latest MailerLite group-subscriber count for a managed product.
+    Refreshed on demand by hitting the /mailerlite/sync-counts endpoint."""
+
+    managed_product_id: str
+    count: int = Field(ge=0)
+    synced_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

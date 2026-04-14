@@ -1,0 +1,8 @@
+# Pin Python 3.12 so Nixpacks doesn't default to an older interpreter.
+# pyproject.toml requires Python >= 3.12 and some deps break on 3.11.
+[phases.setup]
+nixPkgs = ["python312", "python312Packages.pip", "gcc"]
+
+# Let Nixpacks do its normal pip-based install. It finds pyproject.toml and
+# runs `pip install .` (or uv, if it detects it) — we don't need to script
+# the venv manually, just make sure pip points at python3.12.

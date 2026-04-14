@@ -17,7 +17,40 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .models import Product, ProductScore, ScoreBreakdown
+from .models import Platform, Product, ProductScore, ScoreBreakdown
+
+
+_PLATFORM_TRUST: dict[Platform, float] = {
+    Platform.HOTMART: 1.00,
+    Platform.MONETIZZE: 0.90,
+    Platform.EDUZZ: 0.90,
+    Platform.AMAZON: 0.80,
+    Platform.SHOPEE: 0.60,
+    Platform.MAGALU: 0.60,
+    Platform.HOSTINGER: 0.75,
+    Platform.SEMRUSH: 0.75,
+    Platform.DIRECT: 0.50,
+}
+
+_MANAGED_TICKET_REFERENCE_BRL = 2000.0
+
+
+def score_managed_product(
+    *,
+    commission_pct: float,
+    ticket_brl: float,
+    platform: Platform,
+) -> float:
+    """Quality score 0–100 for a manually-registered product.
+
+    Distinct from `score_product` (scraper output) because the operator-curated
+    catalog has a different input shape and different weights per the brief:
+    commission 40%, ticket 30%, platform trust 30%.
+    """
+    commission = min(max(commission_pct, 0.0), 60.0) / 60.0
+    ticket = min(1.0, math.log1p(max(ticket_brl, 0.0)) / math.log1p(_MANAGED_TICKET_REFERENCE_BRL))
+    trust = _PLATFORM_TRUST.get(platform, 0.5)
+    return round((0.40 * commission + 0.30 * ticket + 0.30 * trust) * 100, 2)
 
 
 @dataclass(frozen=True)

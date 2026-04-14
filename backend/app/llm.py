@@ -217,6 +217,10 @@ class LLMAnalyzer:
 
 def build_default_analyzer() -> LLMAnalyzer:
     """Real-client constructor. Imported lazily so tests don't need an API key."""
-    import anthropic
+    from pathlib import Path
 
+    import anthropic
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
     return LLMAnalyzer(client=anthropic.Anthropic())
