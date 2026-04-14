@@ -93,41 +93,41 @@ def scale_readiness(
 
     checks: list[tuple[str, bool, str, str]] = [
         (
-            "Tracked link with UTMs",
+            "Link rastreado com UTMs",
             len(links_with_utm) > 0,
-            f"{len(links_with_utm)} tracked link(s) with UTMs · {len(short_links)} total",
-            "Crie um short link com utm_source/medium/campaign na aba My Products.",
+            f"{len(links_with_utm)} link(s) rastreado(s) com UTMs · {len(short_links)} no total",
+            "Crie um link rastreado com utm_source/medium/campaign na aba Meus Produtos.",
         ),
         (
-            "Bridge page published",
+            "Bridge page publicada",
             len(bridges) > 0,
             f"{len(bridges)} bridge page(s)",
             "Crie uma bridge page na aba Bridge Pages para aumentar a conversão antes do afiliado.",
         ),
         (
-            "At least 1 active traffic channel",
+            "Pelo menos 1 canal de tráfego ativo",
             len(active_channels) > 0,
-            f"{len(active_channels)} active / {len(channels)} configured",
-            "Ative pelo menos um canal (orgânico ou pago) na aba My Products → Traffic channels.",
+            f"{len(active_channels)} ativo(s) / {len(channels)} configurado(s)",
+            "Ative pelo menos um canal (orgânico ou pago) em Meus Produtos → Canais de tráfego.",
         ),
         (
-            "Email list connected",
+            "Lista de e-mail conectada",
             len(connected_sequences) > 0,
-            f"{len(connected_sequences)} sequence(s) linked to a MailerLite group",
-            "Configure um grupo MailerLite e salve uma sequência na aba Email.",
+            f"{len(connected_sequences)} sequência(s) com grupo MailerLite",
+            "Configure um grupo do MailerLite e salve uma sequência na aba E-mail.",
         ),
         (
-            f"{_MIN_CLICKS_FOR_SCALE}+ clicks registered",
+            f"{_MIN_CLICKS_FOR_SCALE}+ cliques registrados",
             total_clicks >= _MIN_CLICKS_FOR_SCALE,
             f"{total_clicks} / {_MIN_CLICKS_FOR_SCALE}",
-            f"Você tem {total_clicks} cliques. Dirija mais tráfego antes de escalar — "
+            f"Você tem {total_clicks} cliques. Gere mais tráfego antes de escalar — "
             f"abaixo de {_MIN_CLICKS_FOR_SCALE} os dados não são estatisticamente significativos.",
         ),
         (
             "EPC > 0",
             (mp.epc_actual or 0) > 0,
-            f"EPC = R$ {mp.epc_actual:.2f}" if mp.epc_actual else "not set",
-            "Rastreie uma comissão real e preencha o EPC na aba KPIs.",
+            f"EPC = R$ {mp.epc_actual:.2f}" if mp.epc_actual else "não definido",
+            "Registre uma comissão real e preencha o EPC na aba KPIs.",
         ),
     ]
 

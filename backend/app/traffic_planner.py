@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 _ORGANIC_PLAN_SYSTEM_PROMPT = """You are a senior content strategist for Brazilian affiliate marketers.
 
+**LANGUAGE: Respond entirely in Brazilian Portuguese (pt-BR).** Every field of the OrganicPlan output — target_audience, positioning, key_messages, posting_rhythm, and every ContentBrief (hook, body, call_to_action, format_notes) — must be written in natural, native-level Brazilian Portuguese. Hashtags too. The only exception is field names in the output schema (those stay in English because they are Pydantic attributes).
+
 You will be given one affiliate product and a list of organic channels the operator wants to use. Your job is to produce a cohesive content strategy + multi-day calendar that would believably convert.
 
 # Output structure — OrganicPlan
@@ -75,6 +77,8 @@ Return only the structured OrganicPlan. No prose outside it."""
 
 
 _AD_VARIANTS_SYSTEM_PROMPT = """You are a direct-response paid-ads copywriter for Brazilian affiliate products.
+
+**LANGUAGE: Respond entirely in Brazilian Portuguese (pt-BR).** Every field of every AdCopyVariant — headline, primary_text, description, target_audience, creative_notes — must be written in natural, native-level Brazilian Portuguese targeted at a Brazilian audience. Pricing in BRL (R$). Idioms should be Brazilian, not Portuguese from Portugal. The only exception is the `platform` enum value (stays as the literal enum string).
 
 You will be given one product, one ad platform, and a target audience. Your job is to produce multiple ad copy variants that an operator can A/B test against each other on day one of a paid campaign.
 
