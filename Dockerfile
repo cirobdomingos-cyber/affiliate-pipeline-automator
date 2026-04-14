@@ -38,26 +38,14 @@ COPY . .
 RUN mkdir -p /data
 ENV DATA_DIR=/data
 
-# Railway injects $PORT at runtime. Streamlit binds 0.0.0.0:$PORT and
-# Railway probes /_stcore/health (Streamlit's own health endpoint).
+RUN chmod +x start.sh
+
+# Railway injects $PORT at runtime. The CMD points at start.sh which is
+# a plain POSIX shell script doing the $PORT expansion itself — this
+# sidesteps the common Railway pitfall where a "Custom Start Command"
+# field in the dashboard passes the command to exec without shell
+# interpolation, leaving `$PORT` as a literal string.
 #
-# The leading echoes are deliberate — Railway's build logs end after
-# "importing to docker" and then jump straight to the healthcheck phase,
-# so we need at least one line of stdout from the container to confirm
-# the CMD actually executes. If these echoes don't appear in the Deploy
-# Logs tab, the CMD itself is failing before Python starts.
-#
-# `python -m streamlit` instead of bare `streamlit` avoids any PATH
-# issues from `pip install -e .`.
-CMD ["sh", "-c", "\
-echo '[boot] container starting' && \
-echo \"[boot] PORT=$PORT\" && \
-echo \"[boot] DATA_DIR=${DATA_DIR:-<unset>}\" && \
-echo \"[boot] DATABASE_URL=${DATABASE_URL:+<set>}\" && \
-python --version && \
-echo '[boot] launching streamlit...' && \
-exec python -m streamlit run ui/streamlit_app.py \
-  --server.port $PORT \
-  --server.address 0.0.0.0 \
-  --server.headless true \
-  --browser.gatherUsageStats false"]
+# If Railway's Custom Start Command is empty, this CMD runs.
+# If Railway's Custom Start Command is set, point it at `./start.sh`.
+CMD ["./start.sh"]
