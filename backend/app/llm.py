@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 # Any byte change here invalidates the prompt cache for every downstream call.
 _SALES_PAGE_SYSTEM_PROMPT = """You are an expert at analyzing Brazilian digital infoproduct sales pages.
 
+**LANGUAGE: The `notes` field of the SalesPageSignals output must be written in Brazilian Portuguese (pt-BR).** The numeric signal scores stay as floats; only the prose note is translated.
+
 You are given the visible text content of a sales page (Portuguese, Spanish, or English) and must extract five quality signals as scores from 0.0 to 1.0.
 
 # The five signals
@@ -90,6 +92,8 @@ Return a single SalesPageSignals object. Do not include any prose outside the st
 
 
 _NICHE_FIT_SYSTEM_PROMPT = """You are a senior affiliate marketing strategist for the Brazilian market.
+
+**LANGUAGE: The `reasoning` field of every NicheFit must be written in Brazilian Portuguese (pt-BR).** One sentence, max 25 words, specific. Numeric fit_score stays as a number.
 
 You will be given:
 1. An operator's stated niche and target audience

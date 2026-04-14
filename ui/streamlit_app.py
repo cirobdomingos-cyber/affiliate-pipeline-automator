@@ -66,11 +66,11 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Affiliate Pipeline Automator")
+st.title("Automação de Pipeline de Afiliados")
 st.caption(
-    "Stage 1 — Product discovery for the Brazilian affiliate marketing pipeline. "
-    "Scrapes platforms, scores products on commission, ticket, popularity, "
-    "reputation, and sales-page signals, and ranks them so you can act on the top picks."
+    "Pipeline completo de marketing de afiliados em 7 fases. "
+    "Descobre e pontua produtos, gerencia links rastreados e bridge pages, "
+    "gera briefs de tráfego e creativos com IA, e mostra KPIs por produto."
 )
 
 
@@ -145,53 +145,53 @@ creative_repo = get_creative_repo()
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000")
 
 with st.sidebar:
-    st.header("Discovery")
+    st.header("Descoberta")
     use_mock = st.toggle(
-        "Use mock data",
+        "Usar dados mock",
         value=False,
         help=(
-            "On: use fixture data for demos. Mock data is NOT persisted — it "
-            "lives in the Top picks tab only. "
-            "Off: hit the live sources (Hotmart Next.js hydration + Amazon "
-            "PA-API if credentials are set); results are persisted to DuckDB."
+            "Ligado: usa fixtures de demonstração. Dados mock NÃO são persistidos — "
+            "aparecem apenas na aba Top picks. "
+            "Desligado: busca das fontes reais (Hotmart via hidratação do Next.js + "
+            "Amazon PA-API se houver credenciais); resultados são persistidos no DuckDB."
         ),
     )
-    limit = st.slider("Products per source", min_value=10, max_value=200, value=50, step=10)
-    top_n = st.slider("Show top N", min_value=5, max_value=100, value=25, step=5)
+    limit = st.slider("Produtos por fonte", min_value=10, max_value=200, value=50, step=10)
+    top_n = st.slider("Mostrar top N", min_value=5, max_value=100, value=25, step=5)
 
     st.divider()
-    st.subheader("LLM enrichment (V1)")
+    st.subheader("Enriquecimento com LLM (V1)")
     enable_llm = st.toggle(
-        "Use Claude to rank by niche fit",
+        "Usar Claude para ranquear por fit de nicho",
         value=False,
         help=(
-            "Calls Sonnet 4.6 to re-rank the catalog by how well each product "
-            "fits your stated niche. Requires ANTHROPIC_API_KEY in the environment."
+            "Chama Sonnet 4.6 para rerrankear o catálogo conforme o quanto cada produto "
+            "combina com o nicho declarado. Requer ANTHROPIC_API_KEY no ambiente."
         ),
     )
     target_niche = st.text_input(
-        "Target niche",
+        "Nicho-alvo",
         value="",
-        placeholder="e.g. Digital marketing for first-year affiliates",
+        placeholder="ex: Marketing digital para afiliados iniciantes",
         disabled=not enable_llm,
     )
     target_audience = st.text_input(
-        "Target audience",
+        "Público-alvo",
         value="",
-        placeholder="e.g. 25-35 year olds in Brazil starting their first side hustle",
+        placeholder="ex: 25-35 anos, Brasil, começando o primeiro negócio paralelo",
         disabled=not enable_llm,
     )
 
-    if st.button("Run discovery", type="primary", use_container_width=True):
+    if st.button("Rodar descoberta", type="primary", use_container_width=True):
         analyzer = None
         if enable_llm and target_niche and target_audience:
             try:
                 from backend.app.llm import build_default_analyzer
                 analyzer = build_default_analyzer()
             except Exception as e:
-                st.error(f"Could not initialize LLM analyzer: {e}")
+                st.error(f"Não foi possível inicializar o analisador LLM: {e}")
 
-        with st.spinner("Scraping and scoring..."):
+        with st.spinner("Coletando e pontuando..."):
             result = asyncio.run(
                 run_discovery(
                     repo=repo,
@@ -205,64 +205,65 @@ with st.sidebar:
             )
         st.session_state["last_result"] = result
         summary = (
-            f"Fetched {result.fetched} from {', '.join(result.sources)} · "
-            f"scored {result.scored}"
+            f"Coletados {result.fetched} de {', '.join(result.sources)} · "
+            f"pontuados {result.scored}"
         )
         if result.llm_signals_filled:
-            summary += f" · LLM analyzed {result.llm_signals_filled} sales pages"
+            summary += f" · LLM analisou {result.llm_signals_filled} páginas de vendas"
         if result.niche_rankings:
-            summary += f" · ranked by niche fit ({len(result.niche_rankings)})"
+            summary += f" · ranqueados por fit de nicho ({len(result.niche_rankings)})"
         st.success(summary)
         if result.errors:
             for err in result.errors:
                 st.warning(err)
 
     st.divider()
-    st.subheader("Catalog maintenance")
+    st.subheader("Manutenção do catálogo")
     persisted_count = len(repo.top_products(limit=10_000))
-    st.caption(f"{persisted_count} products currently in the persisted catalog.")
+    st.caption(f"{persisted_count} produtos atualmente no catálogo persistido.")
     if persisted_count > 0:
         confirm = st.checkbox(
-            "I understand this will delete all persisted products and scores",
+            "Entendo que isto apagará todos os produtos e scores persistidos",
             key="confirm_clear",
         )
         if st.button(
-            "Clear catalog",
+            "Limpar catálogo",
             type="secondary",
             use_container_width=True,
             disabled=not confirm,
         ):
             deleted = repo.clear_catalog()
             st.session_state.pop("last_result", None)
-            st.success(f"Cleared {deleted} products from the catalog.")
+            st.success(f"Apagados {deleted} produtos do catálogo.")
             st.rerun()
     else:
-        st.caption(":gray[Nothing to clear.]")
+        st.caption(":gray[Nada para limpar.]")
 
 
 phase1, phase2, phase3, phase4, phase5, phase6, phase7 = st.tabs(
     [
-        "Phase 1 — Discovery",
-        "Phase 2 — Products & Links",
-        "Phase 3 — Traffic Planning",
-        "Phase 4 — Bridge Pages",
-        "Phase 5 — Email",
-        "Phase 6 — KPIs",
-        "Phase 7 — Scale",
+        "Fase 1 — Descoberta",
+        "Fase 2 — Produtos & Links",
+        "Fase 3 — Planejamento de Tráfego",
+        "Fase 4 — Bridge Pages",
+        "Fase 5 — E-mail",
+        "Fase 6 — KPIs",
+        "Fase 7 — Escalar",
     ]
 )
 
 with phase1:
     tab_onboarding, tab_top, tab_browse, tab_analytics = st.tabs(
-        ["Onboarding", "Top picks", "Browse persisted catalog", "Analytics"]
+        ["Onboarding", "Top picks", "Navegar catálogo", "Analytics"]
     )
 
 with phase2:
     st.caption(
-        "Manual catalog + tracked short links. Channel configs live inside "
-        "each product card (scroll to **Traffic channels** under a product)."
+        "Catálogo manual + links rastreados. A configuração de canais fica "
+        "dentro de cada card de produto (role até **Canais de tráfego** "
+        "debaixo de um produto)."
     )
-    tab_managed, tab_links = st.tabs(["My Products", "Legacy link vault"])
+    tab_managed, tab_links = st.tabs(["Meus Produtos", "Link vault legado"])
 
 tab_traffic = phase3
 tab_bridges = phase4
@@ -272,46 +273,46 @@ tab_scale = phase7
 
 
 _NICHE_LABELS = {
-    Niche.FINANCE: "Finance",
-    Niche.DIGITAL_MARKETING: "Digital marketing",
-    Niche.HEALTH: "Health",
-    Niche.TECH_SAAS: "Tech / SaaS",
-    Niche.BUSINESS: "Business",
-    Niche.OTHER: "Other",
+    Niche.FINANCE: "Finanças",
+    Niche.DIGITAL_MARKETING: "Marketing digital",
+    Niche.HEALTH: "Saúde",
+    Niche.TECH_SAAS: "Tecnologia / SaaS",
+    Niche.BUSINESS: "Negócios",
+    Niche.OTHER: "Outro",
 }
 
 
 with tab_onboarding:
-    st.subheader("Operator onboarding")
-    st.caption("Pick the niche you're building a portfolio around. Drives defaults in every other tab.")
+    st.subheader("Onboarding do operador")
+    st.caption("Escolha o nicho em que está construindo seu portfólio. Define os defaults em todas as outras abas.")
     current_profile = profile_repo.get()
     if current_profile:
         st.success(
-            f"Primary niche: **{_NICHE_LABELS[current_profile.primary_niche]}** "
-            f"(set {current_profile.completed_at.strftime('%Y-%m-%d %H:%M')})"
+            f"Nicho principal: **{_NICHE_LABELS[current_profile.primary_niche]}** "
+            f"(definido em {current_profile.completed_at.strftime('%d/%m/%Y %H:%M')})"
         )
     with st.form("onboarding_form"):
         default_idx = (
             list(Niche).index(current_profile.primary_niche) if current_profile else 0
         )
         chosen = st.selectbox(
-            "Primary niche",
+            "Nicho principal",
             options=list(Niche),
             index=default_idx,
             format_func=lambda n: _NICHE_LABELS[n],
         )
-        if st.form_submit_button("Save", type="primary"):
+        if st.form_submit_button("Salvar", type="primary"):
             profile_repo.save(OperatorProfile(primary_niche=chosen))
-            st.success("Saved.")
+            st.success("Salvo.")
             st.rerun()
 
 
 with tab_managed:
-    st.subheader("My products")
+    st.subheader("Meus produtos")
     st.caption(
-        "Hand-curated catalog — the products you're actively promoting. "
-        "Auto-scored on commission (40%), ticket (30%), and platform trust (30%). "
-        "Score > 70 earns a **Recommended** badge."
+        "Catálogo curado manualmente — os produtos que você está promovendo ativamente. "
+        "Score automático com comissão (40%), ticket (30%) e confiança da plataforma (30%). "
+        "Score > 70 recebe o selo **Recomendado**."
     )
 
     _stale_alerts = []
@@ -325,26 +326,26 @@ with tab_managed:
             )
     if _stale_alerts:
         st.warning(
-            "⚠ Paid channels active with **0 clicks in 24h**:\n\n"
+            "⚠ Canais pagos ativos com **0 cliques nas últimas 24h**:\n\n"
             + "\n".join(
                 f"- **{name}** · {ch}"
-                + (f" · R$ {budget:.0f}/day" if budget else "")
+                + (f" · R$ {budget:.0f}/dia" if budget else "")
                 for name, ch, budget in _stale_alerts
             )
         )
 
-    with st.expander("Add a new product", expanded=False):
+    with st.expander("Adicionar novo produto", expanded=False):
         with st.form("new_managed_product"):
             col1, col2 = st.columns(2)
             with col1:
-                mp_name = st.text_input("Product name", placeholder="e.g. Curso SEO Black")
+                mp_name = st.text_input("Nome do produto", placeholder="ex: Curso SEO Black")
                 mp_platform = st.selectbox(
-                    "Platform",
+                    "Plataforma",
                     options=list(Platform),
                     format_func=lambda p: p.value.title(),
                 )
                 mp_niche = st.selectbox(
-                    "Niche",
+                    "Nicho",
                     options=list(Niche),
                     format_func=lambda n: _NICHE_LABELS[n],
                     index=(
@@ -354,19 +355,19 @@ with tab_managed:
                     ),
                 )
                 mp_commission = st.number_input(
-                    "Commission %", min_value=0.0, max_value=100.0, value=50.0, step=1.0
+                    "Comissão %", min_value=0.0, max_value=100.0, value=50.0, step=1.0
                 )
             with col2:
                 mp_ticket = st.number_input(
-                    "Average ticket (R$)", min_value=0.0, value=297.0, step=10.0
+                    "Ticket médio (R$)", min_value=0.0, value=297.0, step=10.0
                 )
-                mp_sales_url = st.text_input("Sales page URL", placeholder="https://...")
-                mp_aff_url = st.text_input("Affiliate URL", placeholder="https://...")
-                mp_notes = st.text_area("Notes", value="", height=68)
+                mp_sales_url = st.text_input("URL da página de vendas", placeholder="https://...")
+                mp_aff_url = st.text_input("URL de afiliado", placeholder="https://...")
+                mp_notes = st.text_area("Notas", value="", height=68)
 
-            if st.form_submit_button("Create product", type="primary"):
+            if st.form_submit_button("Criar produto", type="primary"):
                 if not (mp_name and mp_aff_url):
-                    st.error("Name and affiliate URL are required.")
+                    st.error("Nome e URL de afiliado são obrigatórios.")
                 else:
                     now = datetime.now(timezone.utc)
                     mp = ManagedProduct(
@@ -388,12 +389,12 @@ with tab_managed:
                         updated_at=now,
                     )
                     managed_repo.upsert(mp)
-                    st.success(f"Created — quality score {mp.quality_score:.1f}")
+                    st.success(f"Criado — score de qualidade {mp.quality_score:.1f}")
                     st.rerun()
 
     managed_list = managed_repo.list()
     if not managed_list:
-        st.info("No managed products yet. Add one above.")
+        st.info("Nenhum produto cadastrado ainda. Adicione um acima.")
     else:
         for mp in managed_list:
             with st.container(border=True):
@@ -401,24 +402,24 @@ with tab_managed:
                 with header_cols[0]:
                     title = f"### {mp.name}"
                     if mp.recommended:
-                        title += "  :green-badge[Recommended]"
+                        title += "  :green-badge[Recomendado]"
                     st.markdown(title)
                     st.caption(
                         f"{mp.platform.value.title()} · {_NICHE_LABELS[mp.niche]} · "
-                        f"R$ {mp.ticket_brl:,.2f} · {mp.commission_pct:.0f}% commission"
+                        f"R$ {mp.ticket_brl:,.2f} · comissão {mp.commission_pct:.0f}%"
                     )
                 with header_cols[1]:
-                    st.metric("Quality score", f"{mp.quality_score:.1f}")
+                    st.metric("Score de qualidade", f"{mp.quality_score:.1f}")
                 with header_cols[2]:
-                    if st.button("Delete", key=f"del_{mp.id}", type="secondary"):
+                    if st.button("Excluir", key=f"del_{mp.id}", type="secondary"):
                         managed_repo.delete(mp.id)
                         st.rerun()
                 if mp.affiliate_url:
-                    st.markdown(f"[Affiliate link ↗]({mp.affiliate_url})")
+                    st.markdown(f"[Link de afiliado ↗]({mp.affiliate_url})")
                 if mp.notes:
                     st.caption(mp.notes)
 
-                with st.expander("Tracked short links"):
+                with st.expander("Links rastreados"):
                     existing = short_repo.list(managed_product_id=mp.id)
                     if existing:
                         for sl in existing:
@@ -431,16 +432,16 @@ with tab_managed:
                                     f"→ {sl.destination_url[:80]}{'…' if len(sl.destination_url) > 80 else ''}"
                                 )
                             with col_b:
-                                st.metric("Clicks", stats.total_clicks)
+                                st.metric("Cliques", stats.total_clicks)
                             with col_c:
-                                if st.button("Delete", key=f"delsl_{sl.slug}"):
+                                if st.button("Excluir", key=f"delsl_{sl.slug}"):
                                     short_repo.delete(sl.slug)
                                     st.rerun()
                     else:
-                        st.caption(":gray[No tracked links yet.]")
+                        st.caption(":gray[Nenhum link rastreado ainda.]")
 
                     with st.form(f"newsl_{mp.id}"):
-                        st.markdown("**New tracked link**")
+                        st.markdown("**Novo link rastreado**")
                         utm_cols = st.columns(3)
                         new_src = utm_cols[0].text_input(
                             "utm_source", placeholder="instagram", key=f"src_{mp.id}"
@@ -449,9 +450,9 @@ with tab_managed:
                             "utm_medium", placeholder="bio", key=f"med_{mp.id}"
                         )
                         new_cmp = utm_cols[2].text_input(
-                            "utm_campaign", placeholder="launch-abril", key=f"cmp_{mp.id}"
+                            "utm_campaign", placeholder="lancamento-abril", key=f"cmp_{mp.id}"
                         )
-                        if st.form_submit_button("Create tracked link"):
+                        if st.form_submit_button("Criar link rastreado"):
                             slug = generate_slug()
                             dest = compose_destination(
                                 affiliate_url=mp.affiliate_url,
@@ -469,33 +470,33 @@ with tab_managed:
                                     utm_campaign=new_cmp or None,
                                 )
                             )
-                            st.success(f"Created: {APP_BASE_URL}/r/{slug}")
+                            st.success(f"Criado: {APP_BASE_URL}/r/{slug}")
                             st.rerun()
 
-                with st.expander("Traffic channels"):
+                with st.expander("Canais de tráfego"):
                     existing_channels = {
                         c.channel: c for c in channel_repo.list_for_product(mp.id)
                     }
                     st.caption(
-                        f"{len(existing_channels)} configured · "
-                        f"{sum(1 for c in existing_channels.values() if c.status == ChannelStatus.ACTIVE)} active"
+                        f"{len(existing_channels)} configurado(s) · "
+                        f"{sum(1 for c in existing_channels.values() if c.status == ChannelStatus.ACTIVE)} ativo(s)"
                     )
                     for cfg in existing_channels.values():
                         row = st.columns([3, 1, 1, 1])
                         is_paid = cfg.channel in PAID_CHANNELS
                         row[0].markdown(
                             f"**{cfg.channel.value}** "
-                            f"{':green-badge[active]' if cfg.status == ChannelStatus.ACTIVE else ':gray-badge[paused]'}"
-                            f"{' · :orange-badge[paid]' if is_paid else ' · :blue-badge[organic]'}"
+                            f"{':green-badge[ativo]' if cfg.status == ChannelStatus.ACTIVE else ':gray-badge[pausado]'}"
+                            f"{' · :orange-badge[pago]' if is_paid else ' · :blue-badge[orgânico]'}"
                         )
                         row[1].caption(
-                            f"R$ {cfg.daily_budget_brl:.0f}/day" if cfg.daily_budget_brl else "—"
+                            f"R$ {cfg.daily_budget_brl:.0f}/dia" if cfg.daily_budget_brl else "—"
                         )
                         row[2].caption(
-                            f"goal {cfg.daily_click_goal}/day" if cfg.daily_click_goal else "—"
+                            f"meta {cfg.daily_click_goal}/dia" if cfg.daily_click_goal else "—"
                         )
                         if row[3].button(
-                            "Pause" if cfg.status == ChannelStatus.ACTIVE else "Activate",
+                            "Pausar" if cfg.status == ChannelStatus.ACTIVE else "Ativar",
                             key=f"togglech_{cfg.id}",
                         ):
                             cfg.status = (
@@ -508,36 +509,36 @@ with tab_managed:
                             st.rerun()
 
                     with st.form(f"newch_{mp.id}"):
-                        st.markdown("**Add channel**")
+                        st.markdown("**Adicionar canal**")
                         ch_cols = st.columns([2, 1, 1])
                         available = [
                             ch for ch in TrafficChannel if ch not in existing_channels
                         ]
                         if not available:
-                            st.caption(":gray[All channels configured.]")
-                            st.form_submit_button("Add", disabled=True)
+                            st.caption(":gray[Todos os canais já configurados.]")
+                            st.form_submit_button("Adicionar", disabled=True)
                         else:
                             new_ch = ch_cols[0].selectbox(
-                                "Channel",
+                                "Canal",
                                 options=available,
                                 format_func=lambda c: c.value,
                                 key=f"newchsel_{mp.id}",
                             )
                             new_budget = ch_cols[1].number_input(
-                                "Daily budget R$",
+                                "Orçamento diário R$",
                                 min_value=0.0,
                                 value=0.0,
                                 step=10.0,
                                 key=f"newchbud_{mp.id}",
                             )
                             new_goal = ch_cols[2].number_input(
-                                "Clicks/day goal",
+                                "Meta cliques/dia",
                                 min_value=0,
                                 value=0,
                                 step=5,
                                 key=f"newchgoal_{mp.id}",
                             )
-                            if st.form_submit_button("Add channel"):
+                            if st.form_submit_button("Adicionar canal"):
                                 is_paid = new_ch in PAID_CHANNELS
                                 cfg = ChannelConfig(
                                     id=str(uuid.uuid4()),
@@ -553,19 +554,19 @@ with tab_managed:
 with tab_bridges:
     st.subheader("Bridge pages")
     st.caption(
-        "Standalone pre-sell pages served at `/bp/{slug}` — no header, no footer, "
-        "mobile-first. CTA clicks are logged and attributed to the product for "
-        "conversion tracking."
+        "Páginas de pré-venda autônomas em `/bp/{slug}` — sem cabeçalho, sem rodapé, "
+        "mobile-first. Cliques no CTA são registrados e atribuídos ao produto para "
+        "rastreio de conversão."
     )
 
     _managed_for_bridge = managed_repo.list()
     if not _managed_for_bridge:
-        st.info("Create a managed product first (My Products tab).")
+        st.info("Cadastre um produto primeiro (aba Meus Produtos).")
     else:
-        with st.expander("Create new bridge page", expanded=False):
+        with st.expander("Criar nova bridge page", expanded=False):
             with st.form("new_bridge"):
                 bp_product = st.selectbox(
-                    "Managed product",
+                    "Produto",
                     options=_managed_for_bridge,
                     format_func=lambda m: m.name,
                 )
@@ -576,19 +577,19 @@ with tab_bridges:
                     "Subheadline", placeholder="Método testado por mais de 10.000 alunos"
                 )
                 bp_bullets_raw = st.text_area(
-                    "Bullets (one per line, up to 5)",
+                    "Bullets (um por linha, até 5)",
                     placeholder="Benefício 1\nBenefício 2\nBenefício 3",
                     height=100,
                 )
-                bp_cta_text = st.text_input("CTA text", value="Quero saber mais")
+                bp_cta_text = st.text_input("Texto do CTA", value="Quero saber mais")
                 bp_cta_url = st.text_input(
-                    "CTA destination URL (usually the affiliate or short link)",
+                    "URL de destino do CTA (geralmente o link de afiliado ou link rastreado)",
                     value=bp_product.affiliate_url if bp_product else "",
                 )
-                bp_color = st.color_picker("Primary color", value="#2563eb")
-                if st.form_submit_button("Create", type="primary"):
+                bp_color = st.color_picker("Cor primária", value="#2563eb")
+                if st.form_submit_button("Criar", type="primary"):
                     if not (bp_headline and bp_cta_text and bp_cta_url):
-                        st.error("Headline, CTA text, and CTA URL are required.")
+                        st.error("Headline, texto do CTA e URL do CTA são obrigatórios.")
                     else:
                         bullets = [
                             b.strip() for b in bp_bullets_raw.splitlines() if b.strip()
@@ -605,39 +606,31 @@ with tab_bridges:
                             primary_color=bp_color,
                         )
                         bridge_repo.upsert(page)
-                        st.success(f"Created: {APP_BASE_URL}/bp/{slug}")
+                        st.success(f"Criada: {APP_BASE_URL}/bp/{slug}")
                         st.rerun()
 
         pages = bridge_repo.list()
         if not pages:
-            st.info("No bridge pages yet.")
+            st.info("Nenhuma bridge page ainda.")
         else:
             for page in pages:
                 mp = managed_repo.get(page.managed_product_id)
-                mp_name = mp.name if mp else "(deleted product)"
+                mp_name = mp.name if mp else "(produto excluído)"
                 with st.container(border=True):
                     head_cols = st.columns([3, 1, 1])
                     with head_cols[0]:
                         st.markdown(f"### {page.headline}")
                         st.caption(
-                            f"for **{mp_name}** · /bp/{page.slug} · "
-                            f"updated {page.updated_at.strftime('%Y-%m-%d %H:%M')}"
+                            f"para **{mp_name}** · /bp/{page.slug} · "
+                            f"atualizada em {page.updated_at.strftime('%d/%m/%Y %H:%M')}"
                         )
                     with head_cols[1]:
-                        cta_clicks = sum(
-                            1
-                            for _ in range(1)
-                            if click_repo.count_for_product(
-                                page.managed_product_id, target_type="bridge_cta"
-                            )
-                        )
-                        # actual number:
                         n_cta = click_repo.count_for_product(
                             page.managed_product_id, target_type="bridge_cta"
                         )
-                        st.metric("CTA clicks", n_cta)
+                        st.metric("Cliques no CTA", n_cta)
                     with head_cols[2]:
-                        if st.button("Delete", key=f"delbp_{page.slug}"):
+                        if st.button("Excluir", key=f"delbp_{page.slug}"):
                             bridge_repo.delete(page.slug)
                             st.rerun()
                     st.code(f"{APP_BASE_URL}/bp/{page.slug}", language=None)
@@ -645,18 +638,18 @@ with tab_bridges:
                         st.caption(" · ".join(page.bullets))
 
 with tab_email:
-    st.subheader("Email lists & nurture sequences")
+    st.subheader("Listas de e-mail & sequências de nutrição")
     st.caption(
-        "Copy the embeddable form snippet into any external site. On opt-in "
-        "the subscriber is pushed to MailerLite and assigned to the group "
-        "attached to that product's nurture sequence."
+        "Copie o snippet do formulário embedável e cole em qualquer site externo. "
+        "No opt-in o inscrito é enviado ao MailerLite e atribuído ao grupo "
+        "configurado na sequência desse produto."
     )
 
     _managed_for_email = managed_repo.list()
     if not _managed_for_email:
-        st.info("Create a managed product first (My Products tab).")
+        st.info("Cadastre um produto primeiro (aba Meus Produtos).")
     else:
-        if st.button("Sync subscriber counts from MailerLite"):
+        if st.button("Sincronizar contagem de inscritos do MailerLite"):
             from backend.app.services.mailerlite import (
                 MailerLiteError,
                 group_subscriber_count,
@@ -683,7 +676,7 @@ with tab_email:
                 except MailerLiteError as exc:
                     errors += 1
                     st.warning(f"{mp.name}: {exc}")
-            st.success(f"Synced {synced} product(s). {errors} error(s).")
+            st.success(f"Sincronizado(s) {synced} produto(s). {errors} erro(s).")
             st.rerun()
 
         for mp in _managed_for_email:
@@ -695,17 +688,17 @@ with tab_email:
                 with head[1]:
                     snap = sub_repo.get(mp.id)
                     st.metric(
-                        "Subscribers",
+                        "Inscritos",
                         snap.count if snap else 0,
                         help=(
-                            f"Synced {snap.synced_at:%Y-%m-%d %H:%M}" if snap else "Not yet synced"
+                            f"Sincronizado em {snap.synced_at:%d/%m/%Y %H:%M}" if snap else "Ainda não sincronizado"
                         ),
                     )
 
-                with st.expander("Embed form snippet"):
+                with st.expander("Snippet do formulário embed"):
                     st.caption(
-                        "Paste this HTML into any external site to collect opt-ins "
-                        "for this product. The iframe is self-contained (no JS)."
+                        "Cole este HTML em qualquer site externo para coletar opt-ins "
+                        "desse produto. O iframe é autocontido (sem JS)."
                     )
                     snippet = (
                         f'<iframe src="{APP_BASE_URL}/mailerlite/embed/{mp.id}" '
@@ -714,23 +707,23 @@ with tab_email:
                     )
                     st.code(snippet, language="html")
 
-                with st.expander("Nurture sequence"):
+                with st.expander("Sequência de nutrição"):
                     existing_seqs = seq_repo.list(managed_product_id=mp.id)
                     current = existing_seqs[0] if existing_seqs else None
 
                     with st.form(f"seq_form_{mp.id}"):
                         seq_name = st.text_input(
-                            "Sequence name",
-                            value=current.name if current else f"{mp.name} nurture",
+                            "Nome da sequência",
+                            value=current.name if current else f"Nutrição {mp.name}",
                             key=f"seqname_{mp.id}",
                         )
                         ml_group = st.text_input(
-                            "MailerLite group ID (required for opt-in to work)",
+                            "ID do grupo no MailerLite (obrigatório para o opt-in funcionar)",
                             value=current.mailerlite_group_id if current else "",
                             key=f"seqgroup_{mp.id}",
                         )
                         num_steps = st.slider(
-                            "Number of emails",
+                            "Número de e-mails",
                             min_value=0,
                             max_value=7,
                             value=len(current.steps) if current else 3,
@@ -743,21 +736,21 @@ with tab_email:
                                 if current and i < len(current.steps)
                                 else None
                             )
-                            st.markdown(f"**Email {i + 1}**")
+                            st.markdown(f"**E-mail {i + 1}**")
                             c1, c2 = st.columns([1, 3])
                             delay = c1.number_input(
-                                "Delay (days)",
+                                "Atraso (dias)",
                                 min_value=0,
                                 value=existing_step.delay_days if existing_step else (0 if i == 0 else 1),
                                 key=f"delay_{mp.id}_{i}",
                             )
                             subj = c2.text_input(
-                                "Subject",
+                                "Assunto",
                                 value=existing_step.subject if existing_step else "",
                                 key=f"subj_{mp.id}_{i}",
                             )
                             body = st.text_area(
-                                "Body",
+                                "Corpo",
                                 value=existing_step.body if existing_step else "",
                                 height=100,
                                 key=f"body_{mp.id}_{i}",
@@ -765,7 +758,7 @@ with tab_email:
                             steps_data.append((delay, subj, body))
 
                         if st.form_submit_button(
-                            "Save sequence" if current else "Create sequence",
+                            "Salvar sequência" if current else "Criar sequência",
                             type="primary",
                         ):
                             seq = EmailSequence(
@@ -787,19 +780,19 @@ with tab_email:
                                 created_at=current.created_at if current else datetime.now(timezone.utc),
                             )
                             seq_repo.upsert(seq)
-                            st.success("Saved.")
+                            st.success("Salvo.")
                             st.rerun()
 
 with tab_kpis:
-    st.subheader("KPIs by product")
+    st.subheader("KPIs por produto")
     st.caption(
-        "Ranked by **EPC actual** (descending). Products without EPC set fall "
-        "to the bottom — enter them in the My Products tab after you see real "
-        "commissions."
+        "Ranqueado por **EPC real** (decrescente). Produtos sem EPC preenchido "
+        "ficam no final — preencha na aba Meus Produtos depois que receber "
+        "comissões reais."
     )
     _kpi_products = managed_repo.list()
     if not _kpi_products:
-        st.info("No managed products yet.")
+        st.info("Nenhum produto cadastrado ainda.")
     else:
         subs_all = sub_repo.all()
         rows = []
@@ -810,13 +803,13 @@ with tab_kpis:
             conv = (cta / views) if views else 0.0
             rows.append(
                 {
-                    "Product": mp.name,
-                    "Niche": _NICHE_LABELS[mp.niche],
-                    "Affiliate clicks": aff,
-                    "Bridge views": views,
-                    "Bridge CTA": cta,
-                    "Bridge CVR": f"{conv * 100:.1f}%",
-                    "Subscribers": subs_all.get(mp.id, 0),
+                    "Produto": mp.name,
+                    "Nicho": _NICHE_LABELS[mp.niche],
+                    "Cliques afiliado": aff,
+                    "Views bridge": views,
+                    "Cliques CTA": cta,
+                    "Conv. bridge": f"{conv * 100:.1f}%",
+                    "Inscritos": subs_all.get(mp.id, 0),
                     "EPC (R$)": mp.epc_actual if mp.epc_actual is not None else None,
                     "CPV (R$)": mp.cpv_actual if mp.cpv_actual is not None else None,
                     "_id": mp.id,
@@ -832,9 +825,9 @@ with tab_kpis:
         )
 
         st.divider()
-        st.subheader("Clicks per day (last 30 days)")
+        st.subheader("Cliques por dia (últimos 30 dias)")
         product_choice = st.selectbox(
-            "Product",
+            "Produto",
             options=_kpi_products,
             format_func=lambda m: m.name,
             key="kpi_prod",
@@ -859,21 +852,21 @@ with tab_kpis:
             if all_dates:
                 chart_rows = [
                     {
-                        "date": d,
-                        "Affiliate clicks": aff_ts.get(d, 0),
-                        "Bridge views": views_ts.get(d, 0),
-                        "Bridge CTA": cta_ts.get(d, 0),
+                        "data": d,
+                        "Cliques afiliado": aff_ts.get(d, 0),
+                        "Views bridge": views_ts.get(d, 0),
+                        "Cliques CTA": cta_ts.get(d, 0),
                     }
                     for d in all_dates
                 ]
-                st.line_chart(chart_rows, x="date", use_container_width=True)
+                st.line_chart(chart_rows, x="data", use_container_width=True)
             else:
-                st.caption(":gray[No click data yet for this product.]")
+                st.caption(":gray[Nenhum dado de clique para este produto ainda.]")
 
         st.divider()
-        st.subheader("Edit EPC / CPV")
+        st.subheader("Editar EPC / CPV")
         st.caption(
-            "Manual inputs — enter once you've actually seen commissions come in."
+            "Entradas manuais — preencha quando as comissões reais começarem a chegar."
         )
         for mp in _kpi_products:
             with st.form(f"epc_{mp.id}"):
@@ -893,7 +886,7 @@ with tab_kpis:
                     step=0.01,
                     key=f"cpv_in_{mp.id}",
                 )
-                if c4.form_submit_button("Save"):
+                if c4.form_submit_button("Salvar"):
                     mp.epc_actual = new_epc if new_epc > 0 else None
                     mp.cpv_actual = new_cpv if new_cpv > 0 else None
                     mp.updated_at = datetime.now(timezone.utc)
@@ -901,15 +894,15 @@ with tab_kpis:
                     st.rerun()
 
 with tab_scale:
-    st.subheader("Scale readiness")
+    st.subheader("Prontidão para escalar")
     st.caption(
-        "Per-product checklist. A product is ready to scale when every gate "
-        "passes — until then, the suggestions below tell you exactly what's "
-        "missing."
+        "Checklist por produto. Um produto está pronto para escalar quando todos os "
+        "gates passam — até lá, as sugestões abaixo mostram exatamente o que está "
+        "faltando."
     )
     _scale_products = managed_repo.list()
     if not _scale_products:
-        st.info("No managed products yet.")
+        st.info("Nenhum produto cadastrado ainda.")
     else:
         from backend.app.api.scale import (  # noqa: E402  (lazy import — avoids cost on other tabs)
             scale_readiness as _compute_readiness,
@@ -929,46 +922,46 @@ with tab_scale:
                 head = st.columns([3, 1])
                 with head[0]:
                     badge = (
-                        ":green-badge[READY TO SCALE]"
+                        ":green-badge[PRONTO PARA ESCALAR]"
                         if readiness.ready_to_scale
-                        else ":orange-badge[Not ready]"
+                        else ":orange-badge[Não pronto]"
                     )
                     st.markdown(f"### {mp.name} {badge}")
                     passed = sum(1 for item in readiness.checklist if item.passed)
-                    st.caption(f"{passed} / {len(readiness.checklist)} gates passed")
+                    st.caption(f"{passed} / {len(readiness.checklist)} gates aprovados")
                 with head[1]:
                     if mp.recommended:
-                        st.metric("Quality", f"{mp.quality_score:.0f}")
+                        st.metric("Qualidade", f"{mp.quality_score:.0f}")
 
                 for item in readiness.checklist:
                     icon = "✅" if item.passed else "⬜"
                     st.markdown(f"{icon} **{item.label}** — :gray[{item.detail}]")
 
                 if readiness.suggestions:
-                    with st.expander(f"Suggestions ({len(readiness.suggestions)})"):
+                    with st.expander(f"Sugestões ({len(readiness.suggestions)})"):
                         for sug in readiness.suggestions:
                             st.markdown(f"- {sug}")
 
-                with st.expander("Notes"):
+                with st.expander("Notas"):
                     with st.form(f"notes_{mp.id}"):
                         new_notes = st.text_area(
-                            "Notes",
+                            "Notas",
                             value=mp.notes,
                             height=120,
                             key=f"notes_in_{mp.id}",
                             label_visibility="collapsed",
                         )
-                        if st.form_submit_button("Save notes"):
+                        if st.form_submit_button("Salvar notas"):
                             mp.notes = new_notes
                             mp.updated_at = datetime.now(timezone.utc)
                             managed_repo.upsert(mp)
-                            st.success("Saved.")
+                            st.success("Salvo.")
                             st.rerun()
 
 with tab_top:
     result = st.session_state.get("last_result")
     if not result:
-        st.info("Run discovery from the sidebar to see top picks.")
+        st.info("Rode a descoberta na sidebar para ver os top picks.")
     else:
         niche_fit_by_id = {nf.product_id: nf for nf in result.niche_rankings}
         for i, sp in enumerate(result.top, start=1):
@@ -979,67 +972,67 @@ with tab_top:
                 with col_main:
                     st.markdown(f"### {i}. {p.name}")
                     st.caption(
-                        f"{p.platform.value.title()} · {p.category or 'Uncategorized'} · "
-                        f"{p.producer_name or 'Unknown producer'}"
+                        f"{p.platform.value.title()} · {p.category or 'Sem categoria'} · "
+                        f"{p.producer_name or 'Produtor desconhecido'}"
                     )
                     meta_cols = st.columns(4)
-                    meta_cols[0].metric("Price", f"R$ {p.price_brl:,.2f}" if p.price_brl else "—")
+                    meta_cols[0].metric("Preço", f"R$ {p.price_brl:,.2f}" if p.price_brl else "—")
                     meta_cols[1].metric(
-                        "Commission %",
+                        "Comissão %",
                         f"{p.commission_pct:.0f}%" if p.commission_pct is not None else "—",
                     )
                     meta_cols[2].metric(
-                        "Commission R$",
+                        "Comissão R$",
                         f"R$ {p.commission_brl:,.2f}" if p.commission_brl else "—",
                     )
                     meta_cols[3].metric(
                         "EPC",
                         f"R$ {s.expected_value_per_visit:,.4f}",
-                        help="Expected value per visit at 2% assumed conversion rate.",
+                        help="Valor esperado por visita assumindo 2% de conversão.",
                     )
                     is_mock = (p.raw or {}).get("source") == "mock_fixture"
                     if is_mock:
                         st.markdown(
-                            f"[Demo link ↗]({p.url}) "
-                            ":gray[_(mock fixture — points at example.com)_]"
+                            f"[Link demo ↗]({p.url}) "
+                            ":gray[_(fixture mock — aponta para example.com)_]"
                         )
                     else:
-                        st.markdown(f"[Open product page ↗]({p.url})")
+                        st.markdown(f"[Abrir página do produto ↗]({p.url})")
                 with col_score:
                     st.metric("Score", f"{s.score:.1f} / 100")
                     fit = niche_fit_by_id.get(p.id)
                     if fit:
-                        st.metric("Niche fit", f"{fit.fit_score:.0f} / 100")
+                        st.metric("Fit de nicho", f"{fit.fit_score:.0f} / 100")
                         st.caption(fit.reasoning)
-                    with st.expander("Why this score?"):
+                    with st.expander("Por que esse score?"):
                         st.write(
                             {
-                                "commission": s.components.commission,
+                                "comissao": s.components.commission,
                                 "ticket": s.components.ticket,
-                                "reputation": s.components.reputation,
-                                "popularity": s.components.popularity,
-                                "sales_signals": s.components.sales_signals,
+                                "reputacao": s.components.reputation,
+                                "popularidade": s.components.popularity,
+                                "sinais_pagina": s.components.sales_signals,
                             }
                         )
                     llm_detail = p.raw.get("sales_page_signals_detail") if p.raw else None
                     if llm_detail:
-                        with st.expander("LLM sales-page signals"):
+                        with st.expander("Sinais da página (LLM)"):
                             st.write(llm_detail)
 
 with tab_browse:
     persisted = repo.top_products(limit=200)
     if not persisted:
-        st.info("No products persisted yet. Run discovery first.")
+        st.info("Nenhum produto persistido ainda. Rode a descoberta primeiro.")
     else:
         rows = [
             {
                 "Score": round(sp.score.score, 1),
-                "Name": sp.product.name,
-                "Platform": sp.product.platform.value,
-                "Niche": sp.product.niche.value if sp.product.niche else "—",
-                "Price (R$)": sp.product.price_brl,
-                "Commission %": sp.product.commission_pct,
-                "Popularity": sp.product.popularity,
+                "Nome": sp.product.name,
+                "Plataforma": sp.product.platform.value,
+                "Nicho": sp.product.niche.value if sp.product.niche else "—",
+                "Preço (R$)": sp.product.price_brl,
+                "Comissão %": sp.product.commission_pct,
+                "Popularidade": sp.product.popularity,
                 "EPC": sp.score.expected_value_per_visit,
                 "URL": sp.product.url,
             }
@@ -1052,18 +1045,18 @@ with tab_browse:
             column_config={
                 "URL": st.column_config.LinkColumn(
                     "URL",
-                    help="Click to open the product page (mock fixture URLs point at example.com)",
-                    display_text="Open ↗",
+                    help="Clique para abrir a página do produto (URLs de fixture apontam para example.com)",
+                    display_text="Abrir ↗",
                 ),
             },
         )
 
 
 with tab_analytics:
-    st.subheader("Analytics — split by platform")
+    st.subheader("Analytics — dividido por plataforma")
     st.caption(
-        "Every view here is colored by source platform. Use the filters to drill "
-        "into one platform or compare niches across all of them."
+        "Cada visualização aqui é colorida pela plataforma de origem. Use os filtros "
+        "para focar em uma plataforma ou comparar nichos entre todas elas."
     )
 
     import altair as alt  # bundled with Streamlit
@@ -1071,21 +1064,21 @@ with tab_analytics:
 
     analytics_data = repo.top_products(limit=500)
     if not analytics_data:
-        st.info("No products persisted yet. Run discovery from the sidebar first.")
+        st.info("Nenhum produto persistido ainda. Rode a descoberta na sidebar primeiro.")
     else:
         df = pd.DataFrame(
             [
                 {
-                    "Platform": sp.product.platform.value,
-                    "Name": sp.product.name,
-                    "Niche": sp.product.niche.value if sp.product.niche else "unknown",
+                    "Plataforma": sp.product.platform.value,
+                    "Nome": sp.product.name,
+                    "Nicho": sp.product.niche.value if sp.product.niche else "desconhecido",
                     "Score": sp.score.score,
-                    "Price (R$)": sp.product.price_brl,
-                    "Commission %": sp.product.commission_pct,
-                    "Commission R$": sp.product.commission_brl,
+                    "Preço (R$)": sp.product.price_brl,
+                    "Comissão %": sp.product.commission_pct,
+                    "Comissão R$": sp.product.commission_brl,
                     "EPC": sp.score.expected_value_per_visit,
-                    "Popularity": sp.product.popularity,
-                    "Reputation": sp.product.producer_reputation,
+                    "Popularidade": sp.product.popularity,
+                    "Reputação": sp.product.producer_reputation,
                 }
                 for sp in analytics_data
             ]
@@ -1093,85 +1086,85 @@ with tab_analytics:
 
         # -------- Filters --------
         fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
-        available_platforms = sorted(df["Platform"].unique())
+        available_platforms = sorted(df["Plataforma"].unique())
         selected_platforms = fcol1.multiselect(
-            "Platforms",
+            "Plataformas",
             options=available_platforms,
             default=available_platforms,
             format_func=lambda v: v.title(),
         )
-        available_niches = sorted(df["Niche"].unique())
+        available_niches = sorted(df["Nicho"].unique())
         selected_niches = fcol2.multiselect(
-            "Niches",
+            "Nichos",
             options=available_niches,
             default=available_niches,
             format_func=lambda v: v.replace("_", " ").title(),
         )
-        min_score = fcol3.slider("Min score", 0, 100, 0, 5)
+        min_score = fcol3.slider("Score mínimo", 0, 100, 0, 5)
 
         filtered = df[
-            df["Platform"].isin(selected_platforms)
-            & df["Niche"].isin(selected_niches)
+            df["Plataforma"].isin(selected_platforms)
+            & df["Nicho"].isin(selected_niches)
             & (df["Score"] >= min_score)
         ]
 
         if filtered.empty:
-            st.warning("No products match the current filters.")
+            st.warning("Nenhum produto bate com os filtros atuais.")
         else:
             # -------- KPI row --------
             kpi_cols = st.columns(4)
-            kpi_cols[0].metric("Total products", len(filtered))
-            kpi_cols[1].metric("Platforms", filtered["Platform"].nunique())
-            kpi_cols[2].metric("Mean score", f"{filtered['Score'].mean():.1f}")
+            kpi_cols[0].metric("Total de produtos", len(filtered))
+            kpi_cols[1].metric("Plataformas", filtered["Plataforma"].nunique())
+            kpi_cols[2].metric("Score médio", f"{filtered['Score'].mean():.1f}")
             mean_epc = filtered["EPC"].fillna(0).mean()
-            kpi_cols[3].metric("Mean EPC", f"R$ {mean_epc:.4f}")
+            kpi_cols[3].metric("EPC médio", f"R$ {mean_epc:.4f}")
 
             # Consistent color mapping across every chart so the platform
             # palette stays stable when the user toggles filters.
             platform_color = alt.Color(
-                "Platform:N",
+                "Plataforma:N",
                 scale=alt.Scale(scheme="tableau10"),
-                legend=alt.Legend(title="Platform"),
+                legend=alt.Legend(title="Plataforma"),
             )
 
             # -------- Chart 1: Product count by platform --------
-            st.markdown("#### Product count by platform")
+            st.markdown("#### Produtos por plataforma")
             count_chart = (
                 alt.Chart(filtered)
                 .mark_bar()
                 .encode(
-                    x=alt.X("count():Q", title="Products"),
-                    y=alt.Y("Platform:N", sort="-x", title=None),
+                    x=alt.X("count():Q", title="Produtos"),
+                    y=alt.Y("Plataforma:N", sort="-x", title=None),
                     color=platform_color,
-                    tooltip=["Platform", alt.Tooltip("count():Q", title="Count")],
+                    tooltip=["Plataforma", alt.Tooltip("count():Q", title="Total")],
                 )
                 .properties(height=min(60 * len(selected_platforms), 300))
             )
             st.altair_chart(count_chart, use_container_width=True)
 
             # -------- Chart 2: Score distribution by platform --------
-            st.markdown("#### Score distribution")
+            st.markdown("#### Distribuição de score")
             st.caption(
-                "Each dot is one product. Wider spreads mean the scoring model "
-                "differentiates products on that platform; tight clusters mean "
-                "the signal is compressed (common for live Hotmart when price "
-                "and commission are gated behind affiliate login)."
+                "Cada ponto é um produto. Dispersões maiores significam que o modelo "
+                "de score diferencia bem os produtos daquela plataforma; clusters "
+                "apertados indicam sinal comprimido (comum na Hotmart ao vivo quando "
+                "preço e comissão ficam atrás do login de afiliado)."
             )
             score_chart = (
                 alt.Chart(filtered)
                 .mark_circle(size=80, opacity=0.7)
                 .encode(
                     x=alt.X("Score:Q", title="Score (0–100)", scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y("Platform:N", title=None),
+                    y=alt.Y("Plataforma:N", title=None),
                     color=platform_color,
-                    tooltip=["Name", "Platform", "Niche", "Score", "EPC"],
+                    tooltip=["Nome", "Plataforma", "Nicho", "Score", "EPC"],
                 )
                 .properties(height=min(60 * len(selected_platforms), 300))
             )
             st.altair_chart(score_chart, use_container_width=True)
 
             # -------- Chart 3: Top 20 products, colored by platform --------
-            st.markdown("#### Top 20 products by score")
+            st.markdown("#### Top 20 produtos por score")
             top_n = filtered.nlargest(20, "Score")
             top_chart = (
                 alt.Chart(top_n)
@@ -1179,19 +1172,19 @@ with tab_analytics:
                 .encode(
                     x=alt.X("Score:Q", title="Score"),
                     y=alt.Y(
-                        "Name:N",
+                        "Nome:N",
                         sort=alt.SortField(field="Score", order="descending"),
                         title=None,
                         axis=alt.Axis(labelLimit=320),
                     ),
                     color=platform_color,
                     tooltip=[
-                        "Name",
-                        "Platform",
-                        "Niche",
+                        "Nome",
+                        "Plataforma",
+                        "Nicho",
                         alt.Tooltip("Score:Q", format=".1f"),
-                        alt.Tooltip("Price (R$):Q", format=".2f"),
-                        alt.Tooltip("Commission %:Q", format=".1f"),
+                        alt.Tooltip("Preço (R$):Q", format=".2f"),
+                        alt.Tooltip("Comissão %:Q", format=".1f"),
                         alt.Tooltip("EPC:Q", format=".4f"),
                     ],
                 )
@@ -1200,27 +1193,27 @@ with tab_analytics:
             st.altair_chart(top_chart, use_container_width=True)
 
             # -------- Chart 4: Niche mix per platform --------
-            st.markdown("#### Niche mix per platform")
+            st.markdown("#### Mix de nichos por plataforma")
             st.caption(
-                "Where each platform's catalog sits in your niche taxonomy. "
-                "A single platform heavy on one niche is easier to specialize in; "
-                "a platform with broad coverage is better for diversification."
+                "Onde o catálogo de cada plataforma se encaixa na sua taxonomia de "
+                "nichos. Uma plataforma concentrada em um nicho é mais fácil de "
+                "especializar; uma com cobertura ampla é melhor para diversificar."
             )
             niche_chart = (
                 alt.Chart(filtered)
                 .mark_bar()
                 .encode(
-                    x=alt.X("count():Q", title="Products", stack="normalize"),
-                    y=alt.Y("Platform:N", title=None),
+                    x=alt.X("count():Q", title="Produtos", stack="normalize"),
+                    y=alt.Y("Plataforma:N", title=None),
                     color=alt.Color(
-                        "Niche:N",
+                        "Nicho:N",
                         scale=alt.Scale(scheme="category10"),
-                        legend=alt.Legend(title="Niche"),
+                        legend=alt.Legend(title="Nicho"),
                     ),
                     tooltip=[
-                        "Platform",
-                        "Niche",
-                        alt.Tooltip("count():Q", title="Count"),
+                        "Plataforma",
+                        "Nicho",
+                        alt.Tooltip("count():Q", title="Total"),
                     ],
                 )
                 .properties(height=min(60 * len(selected_platforms), 300))
@@ -1229,35 +1222,35 @@ with tab_analytics:
 
 
 with tab_links:
-    st.subheader("Stage 2 — Affiliate Link Vault")
+    st.subheader("Link vault legado")
     st.caption(
-        "Central store for affiliate links. Track approval status per platform "
-        "and build tracked URLs with normalized UTM parameters."
+        "Repositório central de links de afiliado. Controle o status de aprovação "
+        "por plataforma e construa URLs rastreadas com UTMs normalizadas."
     )
 
     col_add, col_filter = st.columns([2, 1])
 
     with col_add:
-        with st.expander("Add a new affiliate link", expanded=False):
+        with st.expander("Adicionar novo link de afiliado", expanded=False):
             with st.form("add_link_form", clear_on_submit=True):
-                label = st.text_input("Label", placeholder="e.g. Curso X — Instagram bio")
-                raw_url = st.text_input("Affiliate URL", placeholder="https://hotmart.com/...")
+                label = st.text_input("Rótulo", placeholder="ex: Curso X — Instagram bio")
+                raw_url = st.text_input("URL de afiliado", placeholder="https://hotmart.com/...")
                 new_platform = st.selectbox(
-                    "Platform",
+                    "Plataforma",
                     options=[p.value for p in Platform],
                     format_func=lambda v: v.title(),
                 )
                 new_status = st.selectbox(
-                    "Approval status",
+                    "Status de aprovação",
                     options=[s.value for s in LinkStatus],
                     format_func=lambda v: v.title(),
                 )
-                notes = st.text_area("Notes", placeholder="Producer approval date, restrictions, etc.")
-                tags_raw = st.text_input("Tags (comma-separated)", placeholder="instagram, bio, organic")
-                submitted = st.form_submit_button("Save link", type="primary")
+                notes = st.text_area("Notas", placeholder="Data de aprovação do produtor, restrições, etc.")
+                tags_raw = st.text_input("Tags (separadas por vírgula)", placeholder="instagram, bio, orgânico")
+                submitted = st.form_submit_button("Salvar link", type="primary")
                 if submitted:
                     if not label or not raw_url:
-                        st.error("Label and URL are required.")
+                        st.error("Rótulo e URL são obrigatórios.")
                     else:
                         tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
                         add_link(
@@ -1269,34 +1262,34 @@ with tab_links:
                             tags=tags,
                             approval_status=LinkStatus(new_status),
                         )
-                        st.success(f"Saved: {label}")
+                        st.success(f"Salvo: {label}")
                         st.rerun()
 
     with col_filter:
         status_filter = st.selectbox(
-            "Filter by status",
-            options=["(all)"] + [s.value for s in LinkStatus],
-            format_func=lambda v: v.title() if v != "(all)" else "All statuses",
+            "Filtrar por status",
+            options=["(todos)"] + [s.value for s in LinkStatus],
+            format_func=lambda v: v.title() if v != "(todos)" else "Todos os status",
         )
         platform_filter = st.selectbox(
-            "Filter by platform",
-            options=["(all)"] + [p.value for p in Platform],
-            format_func=lambda v: v.title() if v != "(all)" else "All platforms",
+            "Filtrar por plataforma",
+            options=["(todas)"] + [p.value for p in Platform],
+            format_func=lambda v: v.title() if v != "(todas)" else "Todas as plataformas",
         )
 
-    status_arg = LinkStatus(status_filter) if status_filter != "(all)" else None
-    platform_arg = Platform(platform_filter) if platform_filter != "(all)" else None
+    status_arg = LinkStatus(status_filter) if status_filter != "(todos)" else None
+    platform_arg = Platform(platform_filter) if platform_filter != "(todas)" else None
     links = link_repo.list(status=status_arg, platform=platform_arg)
 
     if not links:
-        st.info("No links in the vault yet. Add one above to get started.")
+        st.info("Nenhum link no vault ainda. Adicione um acima para começar.")
     else:
         for link in links:
             status_color = {
-                LinkStatus.PENDING: ":orange[Pending]",
-                LinkStatus.APPROVED: ":green[Approved]",
-                LinkStatus.REJECTED: ":red[Rejected]",
-                LinkStatus.EXPIRED: ":gray[Expired]",
+                LinkStatus.PENDING: ":orange[Pendente]",
+                LinkStatus.APPROVED: ":green[Aprovado]",
+                LinkStatus.REJECTED: ":red[Rejeitado]",
+                LinkStatus.EXPIRED: ":gray[Expirado]",
             }[link.approval_status]
 
             with st.container(border=True):
@@ -1321,16 +1314,16 @@ with tab_links:
                         link_repo.set_status(link.id, LinkStatus(new_status_val))
                         st.rerun()
 
-                with st.expander("Build tracked URL"):
+                with st.expander("Construir URL rastreada"):
                     with st.form(f"utm_form_{link.id}"):
                         c1, c2, c3 = st.columns(3)
                         utm_source = c1.text_input("utm_source", value="instagram", key=f"src_{link.id}")
-                        utm_medium = c2.text_input("utm_medium", value="organic", key=f"med_{link.id}")
+                        utm_medium = c2.text_input("utm_medium", value="organico", key=f"med_{link.id}")
                         utm_campaign = c3.text_input("utm_campaign", value="bio-link", key=f"camp_{link.id}")
                         c4, c5 = st.columns(2)
-                        utm_term = c4.text_input("utm_term (optional)", key=f"term_{link.id}")
-                        utm_content = c5.text_input("utm_content (optional)", key=f"cont_{link.id}")
-                        build = st.form_submit_button("Build")
+                        utm_term = c4.text_input("utm_term (opcional)", key=f"term_{link.id}")
+                        utm_content = c5.text_input("utm_content (opcional)", key=f"cont_{link.id}")
+                        build = st.form_submit_button("Construir")
                         if build:
                             utm = UTMParams(
                                 source=utm_source,
@@ -1341,26 +1334,26 @@ with tab_links:
                             )
                             tracked = compose_tracked_url(link, utm)
                             st.code(tracked.final_url, language="text")
-                            st.caption("Values are normalized automatically — 'Instagram Bio' → 'instagram-bio'.")
+                            st.caption("Valores são normalizados automaticamente — 'Instagram Bio' → 'instagram-bio'.")
 
 
 with tab_traffic:
-    st.subheader("Stage 3 — Traffic Plan")
+    st.subheader("Planejamento de Tráfego")
     st.caption(
-        "Generate an organic content calendar (Sonnet) and paid ad variants (Haiku) "
-        "for a product from your catalog. Requires ANTHROPIC_API_KEY."
+        "Gera um calendário de conteúdo orgânico (Sonnet) e variantes de anúncios pagos "
+        "(Haiku) para um produto do seu catálogo. Requer ANTHROPIC_API_KEY."
     )
 
     persisted_products = repo.top_products(limit=100)
     if not persisted_products:
-        st.info("No products persisted yet. Run discovery first.")
+        st.info("Nenhum produto persistido ainda. Rode a descoberta primeiro.")
     else:
         product_labels = {
             sp.product.id: f"{sp.product.name} · {sp.product.platform.value} · R${sp.product.price_brl or 0:.0f}"
             for sp in persisted_products
         }
         selected_id = st.selectbox(
-            "Pick a product",
+            "Escolha um produto",
             options=list(product_labels.keys()),
             format_func=lambda pid: product_labels[pid],
         )
@@ -1380,51 +1373,51 @@ with tab_traffic:
         aud_col, btn_col = st.columns([4, 1])
         with aud_col:
             tp_audience = st.text_input(
-                "Target audience",
-                placeholder="e.g. First-year affiliates in Brazil, 25–35, struggling to make their first sale",
+                "Público-alvo",
+                placeholder="ex: Afiliados iniciantes no Brasil, 25–35 anos, lutando para fazer a primeira venda",
                 key="tp_audience_input",
             )
         with btn_col:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button(
-                "✨ Suggest",
+                "✨ Sugerir",
                 use_container_width=True,
-                help="Ask Haiku to propose an audience based on this product's metadata",
+                help="Pede ao Haiku para propor um público com base nos metadados do produto",
             ):
                 try:
                     from backend.app.traffic_planner import build_default_traffic_planner
                     planner = build_default_traffic_planner()
-                    with st.spinner("Asking Haiku..."):
+                    with st.spinner("Consultando o Haiku..."):
                         suggestion = planner.suggest_audience(selected_product)
                     if suggestion:
                         st.session_state["tp_pending_suggestion"] = suggestion
                         st.rerun()
                     else:
-                        st.warning("Haiku returned an empty suggestion.")
+                        st.warning("Haiku retornou uma sugestão vazia.")
                 except Exception as e:
-                    st.error(f"Suggestion failed: {e}")
+                    st.error(f"Sugestão falhou: {e}")
 
         organic_col, paid_col = st.columns(2)
 
         with organic_col:
-            st.markdown("**Organic plan (Sonnet 4.6)**")
+            st.markdown("**Plano orgânico (Sonnet 4.6)**")
             organic_channels = st.multiselect(
-                "Organic channels",
+                "Canais orgânicos",
                 options=[c.value for c in ORGANIC_CHANNELS],
                 default=[TrafficChannel.INSTAGRAM_REEL.value, TrafficChannel.TIKTOK.value],
                 format_func=lambda v: v.replace("_", " ").title(),
             )
-            plan_days = st.slider("Plan horizon (days)", 3, 30, 7)
-            if st.button("Generate organic plan", type="primary", use_container_width=True):
+            plan_days = st.slider("Horizonte do plano (dias)", 3, 30, 7)
+            if st.button("Gerar plano orgânico", type="primary", use_container_width=True):
                 if not tp_audience:
-                    st.error("Target audience is required.")
+                    st.error("Público-alvo é obrigatório.")
                 elif not organic_channels:
-                    st.error("Pick at least one channel.")
+                    st.error("Escolha pelo menos um canal.")
                 else:
                     try:
                         from backend.app.traffic_planner import build_default_traffic_planner
                         planner = build_default_traffic_planner()
-                        with st.spinner("Sonnet is writing your content plan..."):
+                        with st.spinner("Sonnet está escrevendo seu plano de conteúdo..."):
                             plan = planner.plan_organic(
                                 product=selected_product,
                                 target_audience=tp_audience,
@@ -1433,24 +1426,24 @@ with tab_traffic:
                             )
                         st.session_state["last_organic_plan"] = plan
                     except Exception as e:
-                        st.error(f"Organic plan failed: {e}")
+                        st.error(f"Plano orgânico falhou: {e}")
 
         with paid_col:
-            st.markdown("**Paid ad variants (Haiku 4.5)**")
+            st.markdown("**Variantes de anúncios pagos (Haiku 4.5)**")
             ad_platform = st.selectbox(
-                "Ad platform",
+                "Plataforma de ads",
                 options=[c.value for c in PAID_CHANNELS],
                 format_func=lambda v: v.replace("_", " ").title(),
             )
-            variant_count = st.slider("Number of variants", 3, 10, 5)
-            if st.button("Generate ad variants", type="primary", use_container_width=True):
+            variant_count = st.slider("Número de variantes", 3, 10, 5)
+            if st.button("Gerar variantes de anúncio", type="primary", use_container_width=True):
                 if not tp_audience:
-                    st.error("Target audience is required.")
+                    st.error("Público-alvo é obrigatório.")
                 else:
                     try:
                         from backend.app.traffic_planner import build_default_traffic_planner
                         planner = build_default_traffic_planner()
-                        with st.spinner("Haiku is writing ad copy variants..."):
+                        with st.spinner("Haiku está escrevendo as variantes de copy..."):
                             variants = planner.generate_ad_variants(
                                 product=selected_product,
                                 target_audience=tp_audience,
@@ -1459,52 +1452,52 @@ with tab_traffic:
                             )
                         st.session_state["last_ad_variants"] = variants
                     except Exception as e:
-                        st.error(f"Ad variant generation failed: {e}")
+                        st.error(f"Geração de variantes falhou: {e}")
 
         plan = st.session_state.get("last_organic_plan")
         if plan:
             st.divider()
-            st.markdown("### Organic plan")
-            st.markdown(f"**Target audience:** {plan.target_audience}")
-            st.markdown(f"**Positioning:** {plan.positioning}")
-            st.markdown(f"**Posting rhythm:** {plan.posting_rhythm}")
-            st.markdown("**Key messages:**")
+            st.markdown("### Plano orgânico")
+            st.markdown(f"**Público-alvo:** {plan.target_audience}")
+            st.markdown(f"**Posicionamento:** {plan.positioning}")
+            st.markdown(f"**Ritmo de postagem:** {plan.posting_rhythm}")
+            st.markdown("**Mensagens-chave:**")
             for msg in plan.key_messages:
                 st.markdown(f"- {msg}")
-            st.markdown(f"**Content calendar ({len(plan.briefs)} posts)**")
+            st.markdown(f"**Calendário de conteúdo ({len(plan.briefs)} posts)**")
             for brief in plan.briefs:
                 with st.container(border=True):
                     st.markdown(
-                        f"**Day {brief.day_offset} · {brief.channel.value.replace('_', ' ').title()}**"
+                        f"**Dia {brief.day_offset} · {brief.channel.value.replace('_', ' ').title()}**"
                     )
                     st.markdown(f"**Hook:** {brief.hook}")
-                    st.markdown(f"**Body:** {brief.body}")
+                    st.markdown(f"**Corpo:** {brief.body}")
                     st.markdown(f"**CTA:** {brief.call_to_action}")
                     if brief.hashtags:
                         st.caption(" ".join(f"#{h}" for h in brief.hashtags))
                     if brief.format_notes:
-                        st.caption(f"Format: {brief.format_notes}")
+                        st.caption(f"Formato: {brief.format_notes}")
 
         variants = st.session_state.get("last_ad_variants")
         if variants:
             st.divider()
-            st.markdown("### Paid ad variants")
+            st.markdown("### Variantes de anúncios pagos")
 
             briefs_by_idx = {b.variant_index: b for b in st.session_state.get("last_creative_briefs", [])}
 
             cbcol1, cbcol2 = st.columns([1, 1])
             with cbcol1:
                 if st.button(
-                    "🎨 Generate creative briefs for all variants",
+                    "🎨 Gerar briefs criativos para todas as variantes",
                     use_container_width=True,
                     help=(
-                        "One Haiku call returns a matched image + video prompt for each variant — "
-                        "ready to paste into Ideogram v3 (images) and Veo 3 / Runway Gen-4 (video). "
-                        "No external images are generated yet; that's the follow-up step."
+                        "Uma chamada ao Haiku retorna um par de prompts de imagem + vídeo para "
+                        "cada variante — prontos para colar no Ideogram v3 (imagens) e Veo 3 / "
+                        "Runway Gen-4 (vídeo). Imagens/vídeos concretos são gerados no próximo passo."
                     ),
                 ):
                     if not tp_audience:
-                        st.error("Target audience is required to generate creative briefs.")
+                        st.error("Público-alvo é obrigatório para gerar briefs criativos.")
                     else:
                         try:
                             from backend.app.services.creatives import (
@@ -1512,7 +1505,7 @@ with tab_traffic:
                             )
 
                             gen = build_default_creative_generator()
-                            with st.spinner("Haiku is drafting image + video prompts..."):
+                            with st.spinner("Haiku está redigindo prompts de imagem + vídeo..."):
                                 briefs = gen.briefs(
                                     product=selected_product,
                                     target_audience=tp_audience,
@@ -1521,10 +1514,10 @@ with tab_traffic:
                             st.session_state["last_creative_briefs"] = briefs
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Creative brief generation failed: {e}")
+                            st.error(f"Geração de briefs criativos falhou: {e}")
             with cbcol2:
                 if briefs_by_idx and st.button(
-                    "Clear creative briefs",
+                    "Limpar briefs criativos",
                     use_container_width=True,
                     type="secondary",
                 ):
@@ -1533,14 +1526,14 @@ with tab_traffic:
 
             for i, v in enumerate(variants):
                 with st.container(border=True):
-                    st.markdown(f"**Variant {i + 1} · {v.platform.value.replace('_', ' ').title()}**")
+                    st.markdown(f"**Variante {i + 1} · {v.platform.value.replace('_', ' ').title()}**")
                     st.markdown(f"**Headline:** {v.headline}")
-                    st.markdown(f"**Primary text:** {v.primary_text}")
-                    st.markdown(f"**Description:** {v.description}")
-                    st.caption(f"Audience: {v.target_audience}")
-                    st.caption(f"Daily budget: R$ {v.daily_budget_brl:.0f}")
+                    st.markdown(f"**Texto principal:** {v.primary_text}")
+                    st.markdown(f"**Descrição:** {v.description}")
+                    st.caption(f"Público: {v.target_audience}")
+                    st.caption(f"Orçamento diário: R$ {v.daily_budget_brl:.0f}")
                     if v.creative_notes:
-                        st.caption(f"Creative: {v.creative_notes}")
+                        st.caption(f"Criativo: {v.creative_notes}")
 
                     brief = briefs_by_idx.get(i)
                     if brief:
@@ -1560,21 +1553,21 @@ with tab_traffic:
                         has_direct_gen = has_fal or has_replicate
 
                         with st.expander(
-                            f"🎨 Creative brief · {brief.aspect_ratio} · {brief.image_tool} + {brief.video_tool}",
+                            f"🎨 Brief criativo · {brief.aspect_ratio} · {brief.image_tool} + {brief.video_tool}",
                             expanded=True,
                         ):
                             prompt_col, image_col = st.columns([3, 2])
                             with prompt_col:
                                 st.markdown(
-                                    "**Image prompt** — paste into [Ideogram v3](https://ideogram.ai)"
-                                    " or generate directly below"
+                                    "**Prompt de imagem** — cole no [Ideogram v3](https://ideogram.ai)"
+                                    " ou gere direto abaixo"
                                 )
                                 st.code(brief.image_prompt, language=None)
                                 if has_direct_gen:
                                     if st.button(
-                                        "🖼 Generate image now",
+                                        "🖼 Gerar imagem agora",
                                         key=f"genimg_{i}",
-                                        help="Hit fal.ai directly. ~R$0.40 per image.",
+                                        help="Geração direta via fal.ai ou Replicate. ~R$0.40 por imagem.",
                                     ):
                                         try:
                                             from backend.app.services.creatives import (
@@ -1583,38 +1576,38 @@ with tab_traffic:
 
                                             gen = build_default_creative_generator()
                                             if not hasattr(gen, "generate_image"):
-                                                st.error("FAL_API_KEY not set.")
+                                                st.error("Nenhuma API de geração configurada.")
                                             else:
                                                 provider = type(gen).__name__.replace("Generator", "")
-                                                with st.spinner(f"Generating image via {provider}..."):
+                                                with st.spinner(f"Gerando imagem via {provider}..."):
                                                     asset = gen.generate_image(
                                                         product_id=selected_product.id,
                                                         brief=brief,
                                                     )
                                                 creative_repo.insert(asset)
                                                 st.success(
-                                                    f"Image generated (R$ {asset.cost_brl:.2f})"
+                                                    f"Imagem gerada (R$ {asset.cost_brl:.2f})"
                                                     if asset.cost_brl
-                                                    else "Image generated."
+                                                    else "Imagem gerada."
                                                 )
                                                 st.rerun()
                                         except Exception as e:
-                                            st.error(f"Image generation failed: {e}")
+                                            st.error(f"Geração de imagem falhou: {e}")
                                 else:
                                     st.caption(
-                                        ":gray[Set `FAL_API_KEY` or `REPLICATE_API_TOKEN` in .env to enable direct image generation.]"
+                                        ":gray[Defina `REPLICATE_API_TOKEN` ou `FAL_API_KEY` no .env para habilitar geração direta.]"
                                     )
                             with image_col:
                                 if latest_image:
                                     st.image(latest_image.asset_url, use_container_width=True)
                                     st.caption(
-                                        f"Model: {latest_image.model} · "
+                                        f"Modelo: {latest_image.model} · "
                                         + (
                                             f"R$ {latest_image.cost_brl:.2f} · "
                                             if latest_image.cost_brl
                                             else ""
                                         )
-                                        + f"[Open ↗]({latest_image.asset_url})"
+                                        + f"[Abrir ↗]({latest_image.asset_url})"
                                     )
 
                             st.divider()
@@ -1622,15 +1615,15 @@ with tab_traffic:
                             vp_col, video_col = st.columns([3, 2])
                             with vp_col:
                                 st.markdown(
-                                    f"**Video prompt** ({brief.video_duration_s}s) — paste into "
-                                    f"[Veo 3](https://labs.google/veo) or generate directly below"
+                                    f"**Prompt de vídeo** ({brief.video_duration_s}s) — cole no "
+                                    f"[Veo 3](https://labs.google/veo) ou gere direto abaixo"
                                 )
                                 st.code(brief.video_prompt, language=None)
                                 if has_direct_gen:
                                     if st.button(
-                                        "🎬 Generate video now",
+                                        "🎬 Gerar vídeo agora",
                                         key=f"genvid_{i}",
-                                        help="Direct generation via fal.ai or Replicate. Veo 3 ~R$15/clip, 2–5 min wait. Cheaper via REPLICATE_VIDEO_MODEL override.",
+                                        help="Geração direta via fal.ai ou Replicate. Veo 3 ~R$15/clip, 2–5 min de espera. Mais barato via REPLICATE_VIDEO_MODEL override.",
                                     ):
                                         try:
                                             from backend.app.services.creatives import (
@@ -1639,11 +1632,11 @@ with tab_traffic:
 
                                             gen = build_default_creative_generator()
                                             if not hasattr(gen, "generate_video"):
-                                                st.error("FAL_API_KEY not set.")
+                                                st.error("Nenhuma API de geração configurada.")
                                             else:
                                                 provider = type(gen).__name__.replace("Generator", "")
                                                 with st.spinner(
-                                                    f"Generating video via {provider} (2–5 minutes)..."
+                                                    f"Gerando vídeo via {provider} (2–5 minutos)..."
                                                 ):
                                                     asset = gen.generate_video(
                                                         product_id=selected_product.id,
@@ -1651,22 +1644,22 @@ with tab_traffic:
                                                     )
                                                 creative_repo.insert(asset)
                                                 st.success(
-                                                    f"Video generated (R$ {asset.cost_brl:.2f})"
+                                                    f"Vídeo gerado (R$ {asset.cost_brl:.2f})"
                                                     if asset.cost_brl
-                                                    else "Video generated."
+                                                    else "Vídeo gerado."
                                                 )
                                                 st.rerun()
                                         except Exception as e:
-                                            st.error(f"Video generation failed: {e}")
+                                            st.error(f"Geração de vídeo falhou: {e}")
                             with video_col:
                                 if latest_video:
                                     st.video(latest_video.asset_url)
                                     st.caption(
-                                        f"Model: {latest_video.model} · "
+                                        f"Modelo: {latest_video.model} · "
                                         + (
                                             f"R$ {latest_video.cost_brl:.2f} · "
                                             if latest_video.cost_brl
                                             else ""
                                         )
-                                        + f"[Open ↗]({latest_video.asset_url})"
+                                        + f"[Abrir ↗]({latest_video.asset_url})"
                                     )
