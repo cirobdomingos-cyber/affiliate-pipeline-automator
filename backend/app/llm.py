@@ -150,8 +150,15 @@ class LLMAnalyzer:
         response = self._client.messages.parse(
             model=self.HAIKU_MODEL,
             max_tokens=2048,
-            system=_SALES_PAGE_SYSTEM_PROMPT,
-            cache_control={"type": "ephemeral"},
+            # Block-level cache_control works with both messages.create() and
+            # messages.parse(); the top-level shortcut is create()-only.
+            system=[
+                {
+                    "type": "text",
+                    "text": _SALES_PAGE_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[
                 {
                     "role": "user",
@@ -194,8 +201,13 @@ class LLMAnalyzer:
         response = self._client.messages.parse(
             model=self.SONNET_MODEL,
             max_tokens=4096,
-            system=_NICHE_FIT_SYSTEM_PROMPT,
-            cache_control={"type": "ephemeral"},
+            system=[
+                {
+                    "type": "text",
+                    "text": _NICHE_FIT_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_message}],
             output_format=NicheFitBatch,
         )

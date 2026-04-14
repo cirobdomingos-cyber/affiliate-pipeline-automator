@@ -151,8 +151,13 @@ class TrafficPlanner:
         response = self._client.messages.parse(
             model=self.SONNET_MODEL,
             max_tokens=8192,
-            system=_ORGANIC_PLAN_SYSTEM_PROMPT,
-            cache_control={"type": "ephemeral"},
+            system=[
+                {
+                    "type": "text",
+                    "text": _ORGANIC_PLAN_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_message}],
             output_format=OrganicPlan,
         )
@@ -188,8 +193,13 @@ class TrafficPlanner:
         response = self._client.messages.parse(
             model=self.HAIKU_MODEL,
             max_tokens=4096,
-            system=_AD_VARIANTS_SYSTEM_PROMPT,
-            cache_control={"type": "ephemeral"},
+            system=[
+                {
+                    "type": "text",
+                    "text": _AD_VARIANTS_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_message}],
             output_format=AdVariantBatch,
         )

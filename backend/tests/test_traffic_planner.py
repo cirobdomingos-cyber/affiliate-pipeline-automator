@@ -109,7 +109,8 @@ class TestPlanOrganic:
             channels=[TrafficChannel.INSTAGRAM_REEL],
             days=7,
         )
-        assert client.messages.calls[0]["cache_control"] == {"type": "ephemeral"}
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
     def test_uses_frozen_system_prompt(self):
         client = FakeAnthropicClient.with_responses(_sample_plan())
@@ -120,7 +121,8 @@ class TestPlanOrganic:
             channels=[TrafficChannel.INSTAGRAM_REEL],
             days=7,
         )
-        assert client.messages.calls[0]["system"] is _ORGANIC_PLAN_SYSTEM_PROMPT
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["text"] is _ORGANIC_PLAN_SYSTEM_PROMPT
 
     def test_uses_structured_output_schema(self):
         client = FakeAnthropicClient.with_responses(_sample_plan())
@@ -158,9 +160,9 @@ class TestPlanOrganic:
             channels=[TrafficChannel.INSTAGRAM_REEL],
             days=7,
         )
-        system = client.messages.calls[0]["system"]
-        assert "LEAKTEST_PRODUCT" not in system
-        assert "LEAKTEST_AUDIENCE" not in system
+        system_text = client.messages.calls[0]["system"][0]["text"]
+        assert "LEAKTEST_PRODUCT" not in system_text
+        assert "LEAKTEST_AUDIENCE" not in system_text
 
     def test_returns_parsed_plan(self):
         canned = _sample_plan()
@@ -202,7 +204,8 @@ class TestGenerateAdVariants:
             platform=TrafficChannel.META_AD,
             count=3,
         )
-        assert client.messages.calls[0]["cache_control"] == {"type": "ephemeral"}
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
     def test_uses_frozen_system_prompt(self):
         client = FakeAnthropicClient.with_responses(_sample_variants(3))
@@ -213,7 +216,8 @@ class TestGenerateAdVariants:
             platform=TrafficChannel.GOOGLE_AD,
             count=3,
         )
-        assert client.messages.calls[0]["system"] is _AD_VARIANTS_SYSTEM_PROMPT
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["text"] is _AD_VARIANTS_SYSTEM_PROMPT
 
     def test_uses_structured_output_schema(self):
         client = FakeAnthropicClient.with_responses(_sample_variants(3))
@@ -249,9 +253,9 @@ class TestGenerateAdVariants:
             platform=TrafficChannel.META_AD,
             count=1,
         )
-        system = client.messages.calls[0]["system"]
-        assert "ADS_LEAK_PRODUCT" not in system
-        assert "ADS_LEAK_AUDIENCE" not in system
+        system_text = client.messages.calls[0]["system"][0]["text"]
+        assert "ADS_LEAK_PRODUCT" not in system_text
+        assert "ADS_LEAK_AUDIENCE" not in system_text
 
     def test_returns_variants_list(self):
         canned = _sample_variants(5)

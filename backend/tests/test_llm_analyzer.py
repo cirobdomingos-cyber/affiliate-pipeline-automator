@@ -97,17 +97,23 @@ class TestSalesPageAnalyzer:
         analyzer = LLMAnalyzer(client=client)
         analyzer.analyze_sales_page(product_name="X", page_text="y")
 
-        assert client.messages.calls[0]["cache_control"] == {"type": "ephemeral"}
+        # cache_control is a block-level marker on the first (and only) system
+        # text block. Block-level placement is required because messages.parse()
+        # does not accept the top-level cache_control shortcut that create() does.
+        system_blocks = client.messages.calls[0]["system"]
+        assert isinstance(system_blocks, list)
+        assert system_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
     def test_uses_frozen_system_prompt(self):
         # Critical: any per-call string interpolation here would silently
-        # invalidate the prompt cache. The system prompt must be the literal
-        # module constant.
+        # invalidate the prompt cache. The system prompt block's text must be
+        # the literal module constant, not a formatted copy.
         client = FakeAnthropicClient.with_responses(_signals())
         analyzer = LLMAnalyzer(client=client)
         analyzer.analyze_sales_page(product_name="X", page_text="y")
 
-        assert client.messages.calls[0]["system"] is _SALES_PAGE_SYSTEM_PROMPT
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["text"] is _SALES_PAGE_SYSTEM_PROMPT
 
     def test_passes_structured_output_schema(self):
         client = FakeAnthropicClient.with_responses(_signals())
@@ -146,8 +152,9 @@ class TestSalesPageAnalyzer:
         analyzer = LLMAnalyzer(client=client)
         analyzer.analyze_sales_page(product_name="UNIQUE_NAME_42", page_text="UNIQUE_TEXT_42")
 
-        assert "UNIQUE_NAME_42" not in client.messages.calls[0]["system"]
-        assert "UNIQUE_TEXT_42" not in client.messages.calls[0]["system"]
+        system_text = client.messages.calls[0]["system"][0]["text"]
+        assert "UNIQUE_NAME_42" not in system_text
+        assert "UNIQUE_TEXT_42" not in system_text
 
 
 # ---------- Niche-fit analyzer ----------
@@ -205,7 +212,8 @@ class TestNicheFitAnalyzer:
             products=products,
         )
 
-        assert client.messages.calls[0]["cache_control"] == {"type": "ephemeral"}
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
     def test_uses_frozen_system_prompt(self):
         products = [_make_product("P1", "X")]
@@ -218,7 +226,8 @@ class TestNicheFitAnalyzer:
             products=products,
         )
 
-        assert client.messages.calls[0]["system"] is _NICHE_FIT_SYSTEM_PROMPT
+        system_blocks = client.messages.calls[0]["system"]
+        assert system_blocks[0]["text"] is _NICHE_FIT_SYSTEM_PROMPT
 
     def test_passes_structured_output_schema(self):
         products = [_make_product("P1", "X")]
@@ -280,7 +289,7 @@ class TestNicheFitAnalyzer:
             products=products,
         )
 
-        system = client.messages.calls[0]["system"]
-        assert "MAGIC_NAME_99" not in system
-        assert "MAGIC_NICHE_99" not in system
-        assert "MAGIC_AUDIENCE_99" not in system
+        system_text = client.messages.calls[0]["system"][0]["text"]
+        assert "MAGIC_NAME_99" not in system_text
+        assert "MAGIC_NICHE_99" not in system_text
+        assert "MAGIC_AUDIENCE_99" not in system_text
