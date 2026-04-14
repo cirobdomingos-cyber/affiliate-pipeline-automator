@@ -29,6 +29,8 @@ from .models import (
     AdCopyVariant,
     AdVariantBatch,
     ContentBrief,
+    CreativeBrief,
+    CreativeBriefBatch,
     OrganicPlan,
     Product,
     TrafficChannel,
@@ -114,12 +116,125 @@ If the operator asks for N variants, cycle through these angles in order and nev
 Return only the structured AdVariantBatch. No prose outside it."""
 
 
+_CREATIVE_BRIEFS_SYSTEM_PROMPT = """You are the creative director for a Brazilian direct-response affiliate operation.
+
+You will receive one product, one target audience, and N ad copy variants already written. Your job is to produce, for EACH variant, a matched pair of creative prompts — one for a static image and one for a short video — that an operator can paste into an external generation tool without editing.
+
+# Output — CreativeBriefBatch
+
+Return a `briefs` list with exactly N entries, one per input variant, in the same order. Each entry has:
+
+- **variant_index** — 0-based index of the input variant this brief is for. MUST match the input order.
+- **platform** — same platform as the source variant.
+- **aspect_ratio** — pick based on platform: `meta_ad` → "1:1" (feed) or "9:16" if you explicitly target stories/reels; `google_ad` → "1:1"; `tiktok_ad` → "9:16".
+- **image_prompt** — an Ideogram v3-compatible prompt (works for Midjourney too). Rules below.
+- **image_tool** — always "ideogram" (best Portuguese text rendering).
+- **video_prompt** — a Veo 3 / Runway Gen-4 prompt. Rules below.
+- **video_tool** — "veo3".
+- **video_duration_s** — 5 to 8 seconds for feed ads; up to 15 for TikTok/Reels.
+
+# Image prompt rules (Ideogram v3 format)
+
+Include in order:
+1. **Scene** — concrete subject, location, time of day. Never "a nice image of".
+2. **Composition** — shot type (close-up, medium, wide), camera angle, depth.
+3. **Lighting** — natural/studio/golden hour; describe quality and direction.
+4. **Style** — photorealistic, editorial, lifestyle photography, stock-ad-style; avoid "artistic" — affiliate ads convert on realism.
+5. **On-image text** — if the headline is short (<35 chars) include it VERBATIM between quotes in the prompt with instruction like: `with the text "APENAS HOJE R$97" in bold sans-serif at the top`. Ideogram will render it. Never paraphrase the copy.
+6. **Brand cues** — any colors or props that reinforce the offer.
+7. **Aspect ratio tag** — end with ` --ar 9:16` or ` --ar 1:1`.
+
+Example: `Young Brazilian woman in her late 20s working from a laptop on a sunny co-working space in São Paulo, medium shot, natural window light from the left, editorial lifestyle photography, with the text "Primeira venda em 7 dias" in bold white sans-serif on a blue banner at the bottom, warm tones, 1:1 composition --ar 1:1`
+
+# Video prompt rules (Veo 3 / Runway Gen-4 format)
+
+Structure as a brief shot list (not one run-on sentence):
+1. **Opening 2s hook** — what's on screen at second 0. Reference the ad variant's hook.
+2. **Middle** — transition, camera motion, subject action.
+3. **End** — final beat, product or brand mention, CTA moment.
+
+Describe camera (handheld, dolly, static), subject, environment, and any on-screen text that appears over time. Keep it under 80 words total.
+
+Example:
+```
+0-2s: close-up of a young woman's hands typing on a laptop, handheld, kitchen in background, morning light. Text overlay fades in: "Comecei do zero"
+2-5s: she smiles, looks at screen showing Pix notification, subtle zoom in
+5-8s: cut to wide shot, she stands up happy, text overlay: "Aprenda o método — link na bio"
+```
+
+# Hard rules
+
+- Portuguese text on the image/video must be VERBATIM from the ad copy variant — never paraphrase or translate. Ideogram and Veo render what you write.
+- No celebrities, no copyrighted brands in the imagery, no professional athletes.
+- Never describe people in a way that could be read as stereotype bait.
+
+# Hand hygiene (critical — affiliate ads get rejected for mutant hands)
+
+Every current image model — Ideogram, FLUX, Imagen, nano-banana — occasionally botches hands (extra fingers, wrong finger count, warped wrists). Work around this at the composition level:
+
+- **Avoid close-ups of hands.** No "close-up of hands typing", no "hands counting money", no "pointing finger". These produce 6-finger disasters.
+- **Hide hands when possible.** Hands in pockets, behind a laptop, holding a coffee cup that covers the fingers, resting on a table, out of frame.
+- **When hands must be visible, keep them small in frame and at rest** — not gesturing, not pointing, not counting. A person's hand resting naturally on a desk or lap is safe; the same hand raised mid-gesture is a coin flip.
+- **Prefer medium / wide shots over tight close-ups** unless the shot is face-only.
+- When the ad concept screams "show hands" (e.g. holding a product), write the prompt to show the product held at chest height with the hand mostly behind or below the product so fingers are implied rather than rendered.
+
+Apply these to both the image_prompt and the video_prompt.
+
+Return only the CreativeBriefBatch. No prose outside it."""
+
+
+_AUDIENCE_SUGGESTION_SYSTEM_PROMPT = """You are a direct-response strategist for Brazilian affiliate products.
+
+You will be given metadata about one product. Propose ONE specific target audience in a single sentence of Portuguese.
+
+Rules:
+- Always a single sentence, 15–30 words. No lists, no preamble.
+- Name the concrete persona: age range, life stage, current pain, and what they want. Example: "Mães de 28–40 anos em Brasília que voltaram a trabalhar fora e buscam emagrecer sem dieta radical nem academia."
+- Never "entrepreneurs", "anyone interested in X", "people who want to learn". Be specific or don't bother.
+- Write in Portuguese regardless of the product language, because these products are sold in Brazil.
+
+Return only the sentence. No quotes, no prefix."""
+
+
 class TrafficPlanner:
     SONNET_MODEL = "claude-sonnet-4-6"
     HAIKU_MODEL = "claude-haiku-4-5"
 
     def __init__(self, client: AnthropicClientProtocol) -> None:
         self._client = client
+
+    def suggest_audience(self, product: Product) -> str:
+        """Ask Haiku for a one-sentence target-audience proposal.
+
+        Cheap (Haiku + ~200 tokens output) and unstructured — we return the
+        plain text straight from the model so the UI can drop it into a text
+        input for the operator to tweak.
+        """
+        user_message = (
+            f"Product name: {product.name}\n"
+            f"Platform: {product.platform.value}\n"
+            f"Category: {product.category or 'unknown'}\n"
+            f"Price: R${product.price_brl or 0:.2f}\n"
+            f"Commission: {product.commission_pct or 0:.0f}%\n"
+            f"Producer: {product.producer_name or 'unknown'}\n"
+        )
+        response = self._client.messages.create(
+            model=self.HAIKU_MODEL,
+            max_tokens=300,
+            system=[
+                {
+                    "type": "text",
+                    "text": _AUDIENCE_SUGGESTION_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_message}],
+        )
+        # Anthropic SDK returns a list of content blocks; grab the first text.
+        for block in response.content:
+            if getattr(block, "type", None) == "text":
+                return block.text.strip()
+        return ""
 
     def plan_organic(
         self,
@@ -206,9 +321,62 @@ class TrafficPlanner:
         batch: AdVariantBatch = response.parsed_output
         return batch.variants
 
+    def generate_creative_briefs(
+        self,
+        *,
+        product: Product,
+        target_audience: str,
+        variants: list[AdCopyVariant],
+    ) -> list[CreativeBrief]:
+        """One Haiku call returns a matched image+video prompt per variant.
+
+        Output is deliberately tool-agnostic strings so the operator can paste
+        into Ideogram / Veo / Runway without adaptation. When we later wire
+        direct API generation via `services/creatives.py`, that module can
+        dispatch on each brief's `image_tool` / `video_tool` field.
+        """
+        if not variants:
+            return []
+        variant_block = "\n\n".join(
+            f"Variant {i}:\n"
+            f"  Platform: {v.platform.value}\n"
+            f"  Headline: {v.headline}\n"
+            f"  Primary text: {v.primary_text}\n"
+            f"  Description: {v.description}\n"
+            f"  Creative notes: {v.creative_notes or '—'}"
+            for i, v in enumerate(variants)
+        )
+        user_message = (
+            f"Product: {product.name}\n"
+            f"Category: {product.category or 'unknown'}\n"
+            f"Price: R${product.price_brl or 0:.2f}\n"
+            f"Producer: {product.producer_name or 'unknown'}\n\n"
+            f"Target audience: {target_audience}\n\n"
+            f"Ad copy variants to brief ({len(variants)} total):\n\n{variant_block}"
+        )
+        response = self._client.messages.parse(
+            model=self.HAIKU_MODEL,
+            max_tokens=6000,
+            system=[
+                {
+                    "type": "text",
+                    "text": _CREATIVE_BRIEFS_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_message}],
+            output_format=CreativeBriefBatch,
+        )
+        batch: CreativeBriefBatch = response.parsed_output
+        return batch.briefs
+
 
 def build_default_traffic_planner() -> TrafficPlanner:
     """Real-client constructor. Lazy import so tests don't need an API key."""
-    import anthropic
+    from pathlib import Path
 
+    import anthropic
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
     return TrafficPlanner(client=anthropic.Anthropic())

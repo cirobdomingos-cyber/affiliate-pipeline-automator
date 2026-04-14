@@ -12,6 +12,7 @@ Run from repo root:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -20,17 +21,43 @@ import streamlit as st
 # Allow `streamlit run ui/streamlit_app.py` from repo root without install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.app.db import LinkRepository, ProductRepository  # noqa: E402
+import uuid  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+from backend.app.db import (  # noqa: E402
+    BridgePageRepository,
+    ChannelConfigRepository,
+    ClickEventRepository,
+    EmailSequenceRepository,
+    GeneratedCreativeRepository,
+    LinkRepository,
+    ManagedProductRepository,
+    OperatorProfileRepository,
+    ProductRepository,
+    ShortLinkRepository,
+    SubscriberCountRepository,
+)
 from backend.app.models import (  # noqa: E402
     ORGANIC_CHANNELS,
     PAID_CHANNELS,
+    BridgePage,
+    ChannelConfig,
+    ChannelStatus,
+    EmailSequence,
+    EmailSequenceStep,
     LinkStatus,
+    ManagedProduct,
+    Niche,
+    OperatorProfile,
     Platform,
+    ShortLink,
     TrafficChannel,
     UTMParams,
 )
+from backend.app.scoring import score_managed_product  # noqa: E402
 from backend.app.services.discovery import run_discovery  # noqa: E402
 from backend.app.services.link_vault import add_link, compose_tracked_url  # noqa: E402
+from backend.app.services.shortener import compose_destination, generate_slug  # noqa: E402
 
 
 st.set_page_config(
@@ -57,8 +84,65 @@ def get_link_repo() -> LinkRepository:
     return LinkRepository()
 
 
+@st.cache_resource
+def get_managed_repo() -> ManagedProductRepository:
+    return ManagedProductRepository()
+
+
+@st.cache_resource
+def get_profile_repo() -> OperatorProfileRepository:
+    return OperatorProfileRepository()
+
+
+@st.cache_resource
+def get_short_repo() -> ShortLinkRepository:
+    return ShortLinkRepository()
+
+
+@st.cache_resource
+def get_click_repo() -> ClickEventRepository:
+    return ClickEventRepository()
+
+
+@st.cache_resource
+def get_channel_repo() -> ChannelConfigRepository:
+    return ChannelConfigRepository()
+
+
+@st.cache_resource
+def get_bridge_repo() -> BridgePageRepository:
+    return BridgePageRepository()
+
+
+@st.cache_resource
+def get_seq_repo() -> EmailSequenceRepository:
+    return EmailSequenceRepository()
+
+
+@st.cache_resource
+def get_sub_repo() -> SubscriberCountRepository:
+    return SubscriberCountRepository()
+
+
+@st.cache_resource
+def get_creative_repo() -> GeneratedCreativeRepository:
+    return GeneratedCreativeRepository()
+
+
 repo = get_repo()
 link_repo = get_link_repo()
+managed_repo = get_managed_repo()
+profile_repo = get_profile_repo()
+short_repo = get_short_repo()
+click_repo = get_click_repo()
+channel_repo = get_channel_repo()
+bridge_repo = get_bridge_repo()
+seq_repo = get_seq_repo()
+sub_repo = get_sub_repo()
+creative_repo = get_creative_repo()
+
+
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000")
 
 with st.sidebar:
     st.header("Discovery")
@@ -156,9 +240,730 @@ with st.sidebar:
         st.caption(":gray[Nothing to clear.]")
 
 
-tab_top, tab_browse, tab_analytics, tab_links, tab_traffic = st.tabs(
-    ["Top picks", "Browse persisted catalog", "Analytics", "Link Vault", "Traffic Plan"]
+phase1, phase2, phase3, phase4, phase5, phase6, phase7 = st.tabs(
+    [
+        "Phase 1 — Discovery",
+        "Phase 2 — Products & Links",
+        "Phase 3 — Traffic Planning",
+        "Phase 4 — Bridge Pages",
+        "Phase 5 — Email",
+        "Phase 6 — KPIs",
+        "Phase 7 — Scale",
+    ]
 )
+
+with phase1:
+    tab_onboarding, tab_top, tab_browse, tab_analytics = st.tabs(
+        ["Onboarding", "Top picks", "Browse persisted catalog", "Analytics"]
+    )
+
+with phase2:
+    st.caption(
+        "Manual catalog + tracked short links. Channel configs live inside "
+        "each product card (scroll to **Traffic channels** under a product)."
+    )
+    tab_managed, tab_links = st.tabs(["My Products", "Legacy link vault"])
+
+tab_traffic = phase3
+tab_bridges = phase4
+tab_email = phase5
+tab_kpis = phase6
+tab_scale = phase7
+
+
+_NICHE_LABELS = {
+    Niche.FINANCE: "Finance",
+    Niche.DIGITAL_MARKETING: "Digital marketing",
+    Niche.HEALTH: "Health",
+    Niche.TECH_SAAS: "Tech / SaaS",
+    Niche.BUSINESS: "Business",
+    Niche.OTHER: "Other",
+}
+
+
+with tab_onboarding:
+    st.subheader("Operator onboarding")
+    st.caption("Pick the niche you're building a portfolio around. Drives defaults in every other tab.")
+    current_profile = profile_repo.get()
+    if current_profile:
+        st.success(
+            f"Primary niche: **{_NICHE_LABELS[current_profile.primary_niche]}** "
+            f"(set {current_profile.completed_at.strftime('%Y-%m-%d %H:%M')})"
+        )
+    with st.form("onboarding_form"):
+        default_idx = (
+            list(Niche).index(current_profile.primary_niche) if current_profile else 0
+        )
+        chosen = st.selectbox(
+            "Primary niche",
+            options=list(Niche),
+            index=default_idx,
+            format_func=lambda n: _NICHE_LABELS[n],
+        )
+        if st.form_submit_button("Save", type="primary"):
+            profile_repo.save(OperatorProfile(primary_niche=chosen))
+            st.success("Saved.")
+            st.rerun()
+
+
+with tab_managed:
+    st.subheader("My products")
+    st.caption(
+        "Hand-curated catalog — the products you're actively promoting. "
+        "Auto-scored on commission (40%), ticket (30%), and platform trust (30%). "
+        "Score > 70 earns a **Recommended** badge."
+    )
+
+    _stale_alerts = []
+    _name_by_id = {m.id: m.name for m in managed_repo.list()}
+    for _cfg in channel_repo.list_all():
+        if _cfg.status != ChannelStatus.ACTIVE or _cfg.channel not in PAID_CHANNELS:
+            continue
+        if click_repo.recent_count(_cfg.managed_product_id, hours=24) == 0:
+            _stale_alerts.append(
+                (_name_by_id.get(_cfg.managed_product_id, "?"), _cfg.channel.value, _cfg.daily_budget_brl)
+            )
+    if _stale_alerts:
+        st.warning(
+            "⚠ Paid channels active with **0 clicks in 24h**:\n\n"
+            + "\n".join(
+                f"- **{name}** · {ch}"
+                + (f" · R$ {budget:.0f}/day" if budget else "")
+                for name, ch, budget in _stale_alerts
+            )
+        )
+
+    with st.expander("Add a new product", expanded=False):
+        with st.form("new_managed_product"):
+            col1, col2 = st.columns(2)
+            with col1:
+                mp_name = st.text_input("Product name", placeholder="e.g. Curso SEO Black")
+                mp_platform = st.selectbox(
+                    "Platform",
+                    options=list(Platform),
+                    format_func=lambda p: p.value.title(),
+                )
+                mp_niche = st.selectbox(
+                    "Niche",
+                    options=list(Niche),
+                    format_func=lambda n: _NICHE_LABELS[n],
+                    index=(
+                        list(Niche).index(current_profile.primary_niche)
+                        if current_profile
+                        else 0
+                    ),
+                )
+                mp_commission = st.number_input(
+                    "Commission %", min_value=0.0, max_value=100.0, value=50.0, step=1.0
+                )
+            with col2:
+                mp_ticket = st.number_input(
+                    "Average ticket (R$)", min_value=0.0, value=297.0, step=10.0
+                )
+                mp_sales_url = st.text_input("Sales page URL", placeholder="https://...")
+                mp_aff_url = st.text_input("Affiliate URL", placeholder="https://...")
+                mp_notes = st.text_area("Notes", value="", height=68)
+
+            if st.form_submit_button("Create product", type="primary"):
+                if not (mp_name and mp_aff_url):
+                    st.error("Name and affiliate URL are required.")
+                else:
+                    now = datetime.now(timezone.utc)
+                    mp = ManagedProduct(
+                        id=str(uuid.uuid4()),
+                        name=mp_name,
+                        platform=mp_platform,
+                        niche=mp_niche,
+                        commission_pct=mp_commission,
+                        ticket_brl=mp_ticket,
+                        sales_page_url=mp_sales_url or None,
+                        affiliate_url=mp_aff_url,
+                        quality_score=score_managed_product(
+                            commission_pct=mp_commission,
+                            ticket_brl=mp_ticket,
+                            platform=mp_platform,
+                        ),
+                        notes=mp_notes,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    managed_repo.upsert(mp)
+                    st.success(f"Created — quality score {mp.quality_score:.1f}")
+                    st.rerun()
+
+    managed_list = managed_repo.list()
+    if not managed_list:
+        st.info("No managed products yet. Add one above.")
+    else:
+        for mp in managed_list:
+            with st.container(border=True):
+                header_cols = st.columns([3, 1, 1])
+                with header_cols[0]:
+                    title = f"### {mp.name}"
+                    if mp.recommended:
+                        title += "  :green-badge[Recommended]"
+                    st.markdown(title)
+                    st.caption(
+                        f"{mp.platform.value.title()} · {_NICHE_LABELS[mp.niche]} · "
+                        f"R$ {mp.ticket_brl:,.2f} · {mp.commission_pct:.0f}% commission"
+                    )
+                with header_cols[1]:
+                    st.metric("Quality score", f"{mp.quality_score:.1f}")
+                with header_cols[2]:
+                    if st.button("Delete", key=f"del_{mp.id}", type="secondary"):
+                        managed_repo.delete(mp.id)
+                        st.rerun()
+                if mp.affiliate_url:
+                    st.markdown(f"[Affiliate link ↗]({mp.affiliate_url})")
+                if mp.notes:
+                    st.caption(mp.notes)
+
+                with st.expander("Tracked short links"):
+                    existing = short_repo.list(managed_product_id=mp.id)
+                    if existing:
+                        for sl in existing:
+                            stats = short_repo.stats(sl.slug)
+                            col_a, col_b, col_c = st.columns([3, 1, 1])
+                            with col_a:
+                                url = f"{APP_BASE_URL}/r/{sl.slug}"
+                                st.code(url, language=None)
+                                st.caption(
+                                    f"→ {sl.destination_url[:80]}{'…' if len(sl.destination_url) > 80 else ''}"
+                                )
+                            with col_b:
+                                st.metric("Clicks", stats.total_clicks)
+                            with col_c:
+                                if st.button("Delete", key=f"delsl_{sl.slug}"):
+                                    short_repo.delete(sl.slug)
+                                    st.rerun()
+                    else:
+                        st.caption(":gray[No tracked links yet.]")
+
+                    with st.form(f"newsl_{mp.id}"):
+                        st.markdown("**New tracked link**")
+                        utm_cols = st.columns(3)
+                        new_src = utm_cols[0].text_input(
+                            "utm_source", placeholder="instagram", key=f"src_{mp.id}"
+                        )
+                        new_med = utm_cols[1].text_input(
+                            "utm_medium", placeholder="bio", key=f"med_{mp.id}"
+                        )
+                        new_cmp = utm_cols[2].text_input(
+                            "utm_campaign", placeholder="launch-abril", key=f"cmp_{mp.id}"
+                        )
+                        if st.form_submit_button("Create tracked link"):
+                            slug = generate_slug()
+                            dest = compose_destination(
+                                affiliate_url=mp.affiliate_url,
+                                utm_source=new_src or None,
+                                utm_medium=new_med or None,
+                                utm_campaign=new_cmp or None,
+                            )
+                            short_repo.upsert(
+                                ShortLink(
+                                    slug=slug,
+                                    managed_product_id=mp.id,
+                                    destination_url=dest,
+                                    utm_source=new_src or None,
+                                    utm_medium=new_med or None,
+                                    utm_campaign=new_cmp or None,
+                                )
+                            )
+                            st.success(f"Created: {APP_BASE_URL}/r/{slug}")
+                            st.rerun()
+
+                with st.expander("Traffic channels"):
+                    existing_channels = {
+                        c.channel: c for c in channel_repo.list_for_product(mp.id)
+                    }
+                    st.caption(
+                        f"{len(existing_channels)} configured · "
+                        f"{sum(1 for c in existing_channels.values() if c.status == ChannelStatus.ACTIVE)} active"
+                    )
+                    for cfg in existing_channels.values():
+                        row = st.columns([3, 1, 1, 1])
+                        is_paid = cfg.channel in PAID_CHANNELS
+                        row[0].markdown(
+                            f"**{cfg.channel.value}** "
+                            f"{':green-badge[active]' if cfg.status == ChannelStatus.ACTIVE else ':gray-badge[paused]'}"
+                            f"{' · :orange-badge[paid]' if is_paid else ' · :blue-badge[organic]'}"
+                        )
+                        row[1].caption(
+                            f"R$ {cfg.daily_budget_brl:.0f}/day" if cfg.daily_budget_brl else "—"
+                        )
+                        row[2].caption(
+                            f"goal {cfg.daily_click_goal}/day" if cfg.daily_click_goal else "—"
+                        )
+                        if row[3].button(
+                            "Pause" if cfg.status == ChannelStatus.ACTIVE else "Activate",
+                            key=f"togglech_{cfg.id}",
+                        ):
+                            cfg.status = (
+                                ChannelStatus.PAUSED
+                                if cfg.status == ChannelStatus.ACTIVE
+                                else ChannelStatus.ACTIVE
+                            )
+                            cfg.updated_at = datetime.now(timezone.utc)
+                            channel_repo.upsert(cfg)
+                            st.rerun()
+
+                    with st.form(f"newch_{mp.id}"):
+                        st.markdown("**Add channel**")
+                        ch_cols = st.columns([2, 1, 1])
+                        available = [
+                            ch for ch in TrafficChannel if ch not in existing_channels
+                        ]
+                        if not available:
+                            st.caption(":gray[All channels configured.]")
+                            st.form_submit_button("Add", disabled=True)
+                        else:
+                            new_ch = ch_cols[0].selectbox(
+                                "Channel",
+                                options=available,
+                                format_func=lambda c: c.value,
+                                key=f"newchsel_{mp.id}",
+                            )
+                            new_budget = ch_cols[1].number_input(
+                                "Daily budget R$",
+                                min_value=0.0,
+                                value=0.0,
+                                step=10.0,
+                                key=f"newchbud_{mp.id}",
+                            )
+                            new_goal = ch_cols[2].number_input(
+                                "Clicks/day goal",
+                                min_value=0,
+                                value=0,
+                                step=5,
+                                key=f"newchgoal_{mp.id}",
+                            )
+                            if st.form_submit_button("Add channel"):
+                                is_paid = new_ch in PAID_CHANNELS
+                                cfg = ChannelConfig(
+                                    id=str(uuid.uuid4()),
+                                    managed_product_id=mp.id,
+                                    channel=new_ch,
+                                    status=ChannelStatus.ACTIVE,
+                                    daily_budget_brl=new_budget if (is_paid and new_budget > 0) else None,
+                                    daily_click_goal=new_goal if new_goal > 0 else None,
+                                )
+                                channel_repo.upsert(cfg)
+                                st.rerun()
+
+with tab_bridges:
+    st.subheader("Bridge pages")
+    st.caption(
+        "Standalone pre-sell pages served at `/bp/{slug}` — no header, no footer, "
+        "mobile-first. CTA clicks are logged and attributed to the product for "
+        "conversion tracking."
+    )
+
+    _managed_for_bridge = managed_repo.list()
+    if not _managed_for_bridge:
+        st.info("Create a managed product first (My Products tab).")
+    else:
+        with st.expander("Create new bridge page", expanded=False):
+            with st.form("new_bridge"):
+                bp_product = st.selectbox(
+                    "Managed product",
+                    options=_managed_for_bridge,
+                    format_func=lambda m: m.name,
+                )
+                bp_headline = st.text_input(
+                    "Headline", placeholder="Como dobrar sua renda em 90 dias"
+                )
+                bp_sub = st.text_input(
+                    "Subheadline", placeholder="Método testado por mais de 10.000 alunos"
+                )
+                bp_bullets_raw = st.text_area(
+                    "Bullets (one per line, up to 5)",
+                    placeholder="Benefício 1\nBenefício 2\nBenefício 3",
+                    height=100,
+                )
+                bp_cta_text = st.text_input("CTA text", value="Quero saber mais")
+                bp_cta_url = st.text_input(
+                    "CTA destination URL (usually the affiliate or short link)",
+                    value=bp_product.affiliate_url if bp_product else "",
+                )
+                bp_color = st.color_picker("Primary color", value="#2563eb")
+                if st.form_submit_button("Create", type="primary"):
+                    if not (bp_headline and bp_cta_text and bp_cta_url):
+                        st.error("Headline, CTA text, and CTA URL are required.")
+                    else:
+                        bullets = [
+                            b.strip() for b in bp_bullets_raw.splitlines() if b.strip()
+                        ][:5]
+                        slug = generate_slug()
+                        page = BridgePage(
+                            slug=slug,
+                            managed_product_id=bp_product.id,
+                            headline=bp_headline,
+                            subheadline=bp_sub or None,
+                            bullets=bullets,
+                            cta_text=bp_cta_text,
+                            cta_url=bp_cta_url,
+                            primary_color=bp_color,
+                        )
+                        bridge_repo.upsert(page)
+                        st.success(f"Created: {APP_BASE_URL}/bp/{slug}")
+                        st.rerun()
+
+        pages = bridge_repo.list()
+        if not pages:
+            st.info("No bridge pages yet.")
+        else:
+            for page in pages:
+                mp = managed_repo.get(page.managed_product_id)
+                mp_name = mp.name if mp else "(deleted product)"
+                with st.container(border=True):
+                    head_cols = st.columns([3, 1, 1])
+                    with head_cols[0]:
+                        st.markdown(f"### {page.headline}")
+                        st.caption(
+                            f"for **{mp_name}** · /bp/{page.slug} · "
+                            f"updated {page.updated_at.strftime('%Y-%m-%d %H:%M')}"
+                        )
+                    with head_cols[1]:
+                        cta_clicks = sum(
+                            1
+                            for _ in range(1)
+                            if click_repo.count_for_product(
+                                page.managed_product_id, target_type="bridge_cta"
+                            )
+                        )
+                        # actual number:
+                        n_cta = click_repo.count_for_product(
+                            page.managed_product_id, target_type="bridge_cta"
+                        )
+                        st.metric("CTA clicks", n_cta)
+                    with head_cols[2]:
+                        if st.button("Delete", key=f"delbp_{page.slug}"):
+                            bridge_repo.delete(page.slug)
+                            st.rerun()
+                    st.code(f"{APP_BASE_URL}/bp/{page.slug}", language=None)
+                    if page.bullets:
+                        st.caption(" · ".join(page.bullets))
+
+with tab_email:
+    st.subheader("Email lists & nurture sequences")
+    st.caption(
+        "Copy the embeddable form snippet into any external site. On opt-in "
+        "the subscriber is pushed to MailerLite and assigned to the group "
+        "attached to that product's nurture sequence."
+    )
+
+    _managed_for_email = managed_repo.list()
+    if not _managed_for_email:
+        st.info("Create a managed product first (My Products tab).")
+    else:
+        if st.button("Sync subscriber counts from MailerLite"):
+            from backend.app.services.mailerlite import (
+                MailerLiteError,
+                group_subscriber_count,
+            )
+
+            synced = 0
+            errors = 0
+            for mp in _managed_for_email:
+                seqs = seq_repo.list(managed_product_id=mp.id)
+                gid = next((s.mailerlite_group_id for s in seqs if s.mailerlite_group_id), None)
+                if not gid:
+                    continue
+                try:
+                    count = group_subscriber_count(gid)
+                    sub_repo.save(
+                        __import__(
+                            "backend.app.models", fromlist=["SubscriberCountSnapshot"]
+                        ).SubscriberCountSnapshot(
+                            managed_product_id=mp.id,
+                            count=count,
+                        )
+                    )
+                    synced += 1
+                except MailerLiteError as exc:
+                    errors += 1
+                    st.warning(f"{mp.name}: {exc}")
+            st.success(f"Synced {synced} product(s). {errors} error(s).")
+            st.rerun()
+
+        for mp in _managed_for_email:
+            with st.container(border=True):
+                head = st.columns([3, 1])
+                with head[0]:
+                    st.markdown(f"### {mp.name}")
+                    st.caption(_NICHE_LABELS[mp.niche])
+                with head[1]:
+                    snap = sub_repo.get(mp.id)
+                    st.metric(
+                        "Subscribers",
+                        snap.count if snap else 0,
+                        help=(
+                            f"Synced {snap.synced_at:%Y-%m-%d %H:%M}" if snap else "Not yet synced"
+                        ),
+                    )
+
+                with st.expander("Embed form snippet"):
+                    st.caption(
+                        "Paste this HTML into any external site to collect opt-ins "
+                        "for this product. The iframe is self-contained (no JS)."
+                    )
+                    snippet = (
+                        f'<iframe src="{APP_BASE_URL}/mailerlite/embed/{mp.id}" '
+                        f'width="420" height="340" style="border:1px solid #e5e7eb;'
+                        f'border-radius:8px" title="Opt-in"></iframe>'
+                    )
+                    st.code(snippet, language="html")
+
+                with st.expander("Nurture sequence"):
+                    existing_seqs = seq_repo.list(managed_product_id=mp.id)
+                    current = existing_seqs[0] if existing_seqs else None
+
+                    with st.form(f"seq_form_{mp.id}"):
+                        seq_name = st.text_input(
+                            "Sequence name",
+                            value=current.name if current else f"{mp.name} nurture",
+                            key=f"seqname_{mp.id}",
+                        )
+                        ml_group = st.text_input(
+                            "MailerLite group ID (required for opt-in to work)",
+                            value=current.mailerlite_group_id if current else "",
+                            key=f"seqgroup_{mp.id}",
+                        )
+                        num_steps = st.slider(
+                            "Number of emails",
+                            min_value=0,
+                            max_value=7,
+                            value=len(current.steps) if current else 3,
+                            key=f"seqn_{mp.id}",
+                        )
+                        steps_data = []
+                        for i in range(num_steps):
+                            existing_step = (
+                                current.steps[i]
+                                if current and i < len(current.steps)
+                                else None
+                            )
+                            st.markdown(f"**Email {i + 1}**")
+                            c1, c2 = st.columns([1, 3])
+                            delay = c1.number_input(
+                                "Delay (days)",
+                                min_value=0,
+                                value=existing_step.delay_days if existing_step else (0 if i == 0 else 1),
+                                key=f"delay_{mp.id}_{i}",
+                            )
+                            subj = c2.text_input(
+                                "Subject",
+                                value=existing_step.subject if existing_step else "",
+                                key=f"subj_{mp.id}_{i}",
+                            )
+                            body = st.text_area(
+                                "Body",
+                                value=existing_step.body if existing_step else "",
+                                height=100,
+                                key=f"body_{mp.id}_{i}",
+                            )
+                            steps_data.append((delay, subj, body))
+
+                        if st.form_submit_button(
+                            "Save sequence" if current else "Create sequence",
+                            type="primary",
+                        ):
+                            seq = EmailSequence(
+                                id=current.id if current else str(uuid.uuid4()),
+                                managed_product_id=mp.id,
+                                name=seq_name,
+                                mailerlite_group_id=ml_group or None,
+                                steps=[
+                                    EmailSequenceStep(
+                                        id=str(uuid.uuid4()),
+                                        sequence_id=current.id if current else "tmp",
+                                        step_order=i,
+                                        delay_days=d,
+                                        subject=s,
+                                        body=b,
+                                    )
+                                    for i, (d, s, b) in enumerate(steps_data)
+                                ],
+                                created_at=current.created_at if current else datetime.now(timezone.utc),
+                            )
+                            seq_repo.upsert(seq)
+                            st.success("Saved.")
+                            st.rerun()
+
+with tab_kpis:
+    st.subheader("KPIs by product")
+    st.caption(
+        "Ranked by **EPC actual** (descending). Products without EPC set fall "
+        "to the bottom — enter them in the My Products tab after you see real "
+        "commissions."
+    )
+    _kpi_products = managed_repo.list()
+    if not _kpi_products:
+        st.info("No managed products yet.")
+    else:
+        subs_all = sub_repo.all()
+        rows = []
+        for mp in _kpi_products:
+            aff = click_repo.count_for_product(mp.id, target_type="short_link")
+            views = click_repo.count_for_product(mp.id, target_type="bridge_view")
+            cta = click_repo.count_for_product(mp.id, target_type="bridge_cta")
+            conv = (cta / views) if views else 0.0
+            rows.append(
+                {
+                    "Product": mp.name,
+                    "Niche": _NICHE_LABELS[mp.niche],
+                    "Affiliate clicks": aff,
+                    "Bridge views": views,
+                    "Bridge CTA": cta,
+                    "Bridge CVR": f"{conv * 100:.1f}%",
+                    "Subscribers": subs_all.get(mp.id, 0),
+                    "EPC (R$)": mp.epc_actual if mp.epc_actual is not None else None,
+                    "CPV (R$)": mp.cpv_actual if mp.cpv_actual is not None else None,
+                    "_id": mp.id,
+                }
+            )
+        rows.sort(
+            key=lambda r: (r["EPC (R$)"] is None, -(r["EPC (R$)"] or 0.0))
+        )
+        st.dataframe(
+            [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.divider()
+        st.subheader("Clicks per day (last 30 days)")
+        product_choice = st.selectbox(
+            "Product",
+            options=_kpi_products,
+            format_func=lambda m: m.name,
+            key="kpi_prod",
+        )
+        if product_choice:
+            aff_ts = dict(
+                click_repo.daily_timeseries(
+                    product_choice.id, days=30, target_type="short_link"
+                )
+            )
+            views_ts = dict(
+                click_repo.daily_timeseries(
+                    product_choice.id, days=30, target_type="bridge_view"
+                )
+            )
+            cta_ts = dict(
+                click_repo.daily_timeseries(
+                    product_choice.id, days=30, target_type="bridge_cta"
+                )
+            )
+            all_dates = sorted(set(aff_ts) | set(views_ts) | set(cta_ts))
+            if all_dates:
+                chart_rows = [
+                    {
+                        "date": d,
+                        "Affiliate clicks": aff_ts.get(d, 0),
+                        "Bridge views": views_ts.get(d, 0),
+                        "Bridge CTA": cta_ts.get(d, 0),
+                    }
+                    for d in all_dates
+                ]
+                st.line_chart(chart_rows, x="date", use_container_width=True)
+            else:
+                st.caption(":gray[No click data yet for this product.]")
+
+        st.divider()
+        st.subheader("Edit EPC / CPV")
+        st.caption(
+            "Manual inputs — enter once you've actually seen commissions come in."
+        )
+        for mp in _kpi_products:
+            with st.form(f"epc_{mp.id}"):
+                c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+                c1.markdown(f"**{mp.name}**")
+                new_epc = c2.number_input(
+                    "EPC",
+                    min_value=0.0,
+                    value=float(mp.epc_actual) if mp.epc_actual else 0.0,
+                    step=0.01,
+                    key=f"epc_in_{mp.id}",
+                )
+                new_cpv = c3.number_input(
+                    "CPV",
+                    min_value=0.0,
+                    value=float(mp.cpv_actual) if mp.cpv_actual else 0.0,
+                    step=0.01,
+                    key=f"cpv_in_{mp.id}",
+                )
+                if c4.form_submit_button("Save"):
+                    mp.epc_actual = new_epc if new_epc > 0 else None
+                    mp.cpv_actual = new_cpv if new_cpv > 0 else None
+                    mp.updated_at = datetime.now(timezone.utc)
+                    managed_repo.upsert(mp)
+                    st.rerun()
+
+with tab_scale:
+    st.subheader("Scale readiness")
+    st.caption(
+        "Per-product checklist. A product is ready to scale when every gate "
+        "passes — until then, the suggestions below tell you exactly what's "
+        "missing."
+    )
+    _scale_products = managed_repo.list()
+    if not _scale_products:
+        st.info("No managed products yet.")
+    else:
+        from backend.app.api.scale import (  # noqa: E402  (lazy import — avoids cost on other tabs)
+            scale_readiness as _compute_readiness,
+        )
+
+        for mp in _scale_products:
+            readiness = _compute_readiness(
+                product_id=mp.id,
+                managed_repo=managed_repo,
+                short_repo=short_repo,
+                bridge_repo=bridge_repo,
+                channel_repo=channel_repo,
+                seq_repo=seq_repo,
+                click_repo=click_repo,
+            )
+            with st.container(border=True):
+                head = st.columns([3, 1])
+                with head[0]:
+                    badge = (
+                        ":green-badge[READY TO SCALE]"
+                        if readiness.ready_to_scale
+                        else ":orange-badge[Not ready]"
+                    )
+                    st.markdown(f"### {mp.name} {badge}")
+                    passed = sum(1 for item in readiness.checklist if item.passed)
+                    st.caption(f"{passed} / {len(readiness.checklist)} gates passed")
+                with head[1]:
+                    if mp.recommended:
+                        st.metric("Quality", f"{mp.quality_score:.0f}")
+
+                for item in readiness.checklist:
+                    icon = "✅" if item.passed else "⬜"
+                    st.markdown(f"{icon} **{item.label}** — :gray[{item.detail}]")
+
+                if readiness.suggestions:
+                    with st.expander(f"Suggestions ({len(readiness.suggestions)})"):
+                        for sug in readiness.suggestions:
+                            st.markdown(f"- {sug}")
+
+                with st.expander("Notes"):
+                    with st.form(f"notes_{mp.id}"):
+                        new_notes = st.text_area(
+                            "Notes",
+                            value=mp.notes,
+                            height=120,
+                            key=f"notes_in_{mp.id}",
+                            label_visibility="collapsed",
+                        )
+                        if st.form_submit_button("Save notes"):
+                            mp.notes = new_notes
+                            mp.updated_at = datetime.now(timezone.utc)
+                            managed_repo.upsert(mp)
+                            st.success("Saved.")
+                            st.rerun()
 
 with tab_top:
     result = st.session_state.get("last_result")
@@ -563,10 +1368,41 @@ with tab_traffic:
             sp.product for sp in persisted_products if sp.product.id == selected_id
         )
 
-        tp_audience = st.text_input(
-            "Target audience",
-            placeholder="e.g. First-year affiliates in Brazil, 25–35, struggling to make their first sale",
-        )
+        # If a suggestion is pending from the previous run, inject it into the
+        # widget's own state key BEFORE the widget is instantiated. Streamlit
+        # forbids modifying widget state after creation, so the button writes
+        # `tp_pending_suggestion` and we consume it here.
+        if "tp_pending_suggestion" in st.session_state:
+            st.session_state["tp_audience_input"] = st.session_state.pop(
+                "tp_pending_suggestion"
+            )
+
+        aud_col, btn_col = st.columns([4, 1])
+        with aud_col:
+            tp_audience = st.text_input(
+                "Target audience",
+                placeholder="e.g. First-year affiliates in Brazil, 25–35, struggling to make their first sale",
+                key="tp_audience_input",
+            )
+        with btn_col:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(
+                "✨ Suggest",
+                use_container_width=True,
+                help="Ask Haiku to propose an audience based on this product's metadata",
+            ):
+                try:
+                    from backend.app.traffic_planner import build_default_traffic_planner
+                    planner = build_default_traffic_planner()
+                    with st.spinner("Asking Haiku..."):
+                        suggestion = planner.suggest_audience(selected_product)
+                    if suggestion:
+                        st.session_state["tp_pending_suggestion"] = suggestion
+                        st.rerun()
+                    else:
+                        st.warning("Haiku returned an empty suggestion.")
+                except Exception as e:
+                    st.error(f"Suggestion failed: {e}")
 
         organic_col, paid_col = st.columns(2)
 
@@ -653,9 +1489,51 @@ with tab_traffic:
         if variants:
             st.divider()
             st.markdown("### Paid ad variants")
-            for i, v in enumerate(variants, start=1):
+
+            briefs_by_idx = {b.variant_index: b for b in st.session_state.get("last_creative_briefs", [])}
+
+            cbcol1, cbcol2 = st.columns([1, 1])
+            with cbcol1:
+                if st.button(
+                    "🎨 Generate creative briefs for all variants",
+                    use_container_width=True,
+                    help=(
+                        "One Haiku call returns a matched image + video prompt for each variant — "
+                        "ready to paste into Ideogram v3 (images) and Veo 3 / Runway Gen-4 (video). "
+                        "No external images are generated yet; that's the follow-up step."
+                    ),
+                ):
+                    if not tp_audience:
+                        st.error("Target audience is required to generate creative briefs.")
+                    else:
+                        try:
+                            from backend.app.services.creatives import (
+                                build_default_creative_generator,
+                            )
+
+                            gen = build_default_creative_generator()
+                            with st.spinner("Haiku is drafting image + video prompts..."):
+                                briefs = gen.briefs(
+                                    product=selected_product,
+                                    target_audience=tp_audience,
+                                    variants=variants,
+                                )
+                            st.session_state["last_creative_briefs"] = briefs
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Creative brief generation failed: {e}")
+            with cbcol2:
+                if briefs_by_idx and st.button(
+                    "Clear creative briefs",
+                    use_container_width=True,
+                    type="secondary",
+                ):
+                    st.session_state.pop("last_creative_briefs", None)
+                    st.rerun()
+
+            for i, v in enumerate(variants):
                 with st.container(border=True):
-                    st.markdown(f"**Variant {i} · {v.platform.value.replace('_', ' ').title()}**")
+                    st.markdown(f"**Variant {i + 1} · {v.platform.value.replace('_', ' ').title()}**")
                     st.markdown(f"**Headline:** {v.headline}")
                     st.markdown(f"**Primary text:** {v.primary_text}")
                     st.markdown(f"**Description:** {v.description}")
@@ -663,3 +1541,132 @@ with tab_traffic:
                     st.caption(f"Daily budget: R$ {v.daily_budget_brl:.0f}")
                     if v.creative_notes:
                         st.caption(f"Creative: {v.creative_notes}")
+
+                    brief = briefs_by_idx.get(i)
+                    if brief:
+                        # Fetch latest persisted image/video for (product, variant) so
+                        # reload doesn't lose them.
+                        latest = creative_repo.latest_by_variant(selected_product.id)
+                        latest_image = latest.get((i, "image"))
+                        latest_video = latest.get((i, "video"))
+
+                        has_fal = bool(
+                            os.environ.get("FAL_API_KEY") or os.environ.get("FAL_KEY")
+                        )
+                        has_replicate = bool(
+                            os.environ.get("REPLICATE_API_TOKEN")
+                            or os.environ.get("REPLICATE_API_KEY")
+                        )
+                        has_direct_gen = has_fal or has_replicate
+
+                        with st.expander(
+                            f"🎨 Creative brief · {brief.aspect_ratio} · {brief.image_tool} + {brief.video_tool}",
+                            expanded=True,
+                        ):
+                            prompt_col, image_col = st.columns([3, 2])
+                            with prompt_col:
+                                st.markdown(
+                                    "**Image prompt** — paste into [Ideogram v3](https://ideogram.ai)"
+                                    " or generate directly below"
+                                )
+                                st.code(brief.image_prompt, language=None)
+                                if has_direct_gen:
+                                    if st.button(
+                                        "🖼 Generate image now",
+                                        key=f"genimg_{i}",
+                                        help="Hit fal.ai directly. ~R$0.40 per image.",
+                                    ):
+                                        try:
+                                            from backend.app.services.creatives import (
+                                                build_default_creative_generator,
+                                            )
+
+                                            gen = build_default_creative_generator()
+                                            if not hasattr(gen, "generate_image"):
+                                                st.error("FAL_API_KEY not set.")
+                                            else:
+                                                provider = type(gen).__name__.replace("Generator", "")
+                                                with st.spinner(f"Generating image via {provider}..."):
+                                                    asset = gen.generate_image(
+                                                        product_id=selected_product.id,
+                                                        brief=brief,
+                                                    )
+                                                creative_repo.insert(asset)
+                                                st.success(
+                                                    f"Image generated (R$ {asset.cost_brl:.2f})"
+                                                    if asset.cost_brl
+                                                    else "Image generated."
+                                                )
+                                                st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Image generation failed: {e}")
+                                else:
+                                    st.caption(
+                                        ":gray[Set `FAL_API_KEY` or `REPLICATE_API_TOKEN` in .env to enable direct image generation.]"
+                                    )
+                            with image_col:
+                                if latest_image:
+                                    st.image(latest_image.asset_url, use_container_width=True)
+                                    st.caption(
+                                        f"Model: {latest_image.model} · "
+                                        + (
+                                            f"R$ {latest_image.cost_brl:.2f} · "
+                                            if latest_image.cost_brl
+                                            else ""
+                                        )
+                                        + f"[Open ↗]({latest_image.asset_url})"
+                                    )
+
+                            st.divider()
+
+                            vp_col, video_col = st.columns([3, 2])
+                            with vp_col:
+                                st.markdown(
+                                    f"**Video prompt** ({brief.video_duration_s}s) — paste into "
+                                    f"[Veo 3](https://labs.google/veo) or generate directly below"
+                                )
+                                st.code(brief.video_prompt, language=None)
+                                if has_direct_gen:
+                                    if st.button(
+                                        "🎬 Generate video now",
+                                        key=f"genvid_{i}",
+                                        help="Direct generation via fal.ai or Replicate. Veo 3 ~R$15/clip, 2–5 min wait. Cheaper via REPLICATE_VIDEO_MODEL override.",
+                                    ):
+                                        try:
+                                            from backend.app.services.creatives import (
+                                                build_default_creative_generator,
+                                            )
+
+                                            gen = build_default_creative_generator()
+                                            if not hasattr(gen, "generate_video"):
+                                                st.error("FAL_API_KEY not set.")
+                                            else:
+                                                provider = type(gen).__name__.replace("Generator", "")
+                                                with st.spinner(
+                                                    f"Generating video via {provider} (2–5 minutes)..."
+                                                ):
+                                                    asset = gen.generate_video(
+                                                        product_id=selected_product.id,
+                                                        brief=brief,
+                                                    )
+                                                creative_repo.insert(asset)
+                                                st.success(
+                                                    f"Video generated (R$ {asset.cost_brl:.2f})"
+                                                    if asset.cost_brl
+                                                    else "Video generated."
+                                                )
+                                                st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Video generation failed: {e}")
+                            with video_col:
+                                if latest_video:
+                                    st.video(latest_video.asset_url)
+                                    st.caption(
+                                        f"Model: {latest_video.model} · "
+                                        + (
+                                            f"R$ {latest_video.cost_brl:.2f} · "
+                                            if latest_video.cost_brl
+                                            else ""
+                                        )
+                                        + f"[Open ↗]({latest_video.asset_url})"
+                                    )

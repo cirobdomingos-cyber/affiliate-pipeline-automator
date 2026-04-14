@@ -1,0 +1,30 @@
+# Railway deploy configuration.
+#
+# This file describes ONE service's build/deploy defaults. This repo is
+# deployed as TWO services in a single Railway project — both pointing at
+# this same repo:
+#
+#   affiliate-api   FastAPI (public /r/{slug} and /bp/{slug} + admin API)
+#   affiliate-ui    Streamlit operator dashboard
+#
+# Because railway.toml describes one service, the start command below is
+# the default one (FastAPI). Create the UI service in the Railway dashboard
+# with a Custom Start Command override:
+#
+#   streamlit run ui/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
+#
+# Both services share a Railway Volume mounted at /data and set DATA_DIR=/data
+# so they read and write the same affiliate.duckdb file.
+#
+# Environment variables are set per-service in the Railway dashboard. See
+# .env.example for the full list.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
