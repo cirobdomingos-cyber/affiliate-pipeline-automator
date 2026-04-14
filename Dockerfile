@@ -40,6 +40,24 @@ ENV DATA_DIR=/data
 
 # Railway injects $PORT at runtime. Streamlit binds 0.0.0.0:$PORT and
 # Railway probes /_stcore/health (Streamlit's own health endpoint).
-# --server.headless avoids Streamlit's email prompt on first run.
-# sh -c is used so $PORT expands at runtime, not at image build time.
-CMD ["sh", "-c", "streamlit run ui/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"]
+#
+# The leading echoes are deliberate — Railway's build logs end after
+# "importing to docker" and then jump straight to the healthcheck phase,
+# so we need at least one line of stdout from the container to confirm
+# the CMD actually executes. If these echoes don't appear in the Deploy
+# Logs tab, the CMD itself is failing before Python starts.
+#
+# `python -m streamlit` instead of bare `streamlit` avoids any PATH
+# issues from `pip install -e .`.
+CMD ["sh", "-c", "\
+echo '[boot] container starting' && \
+echo \"[boot] PORT=$PORT\" && \
+echo \"[boot] DATA_DIR=${DATA_DIR:-<unset>}\" && \
+echo \"[boot] DATABASE_URL=${DATABASE_URL:+<set>}\" && \
+python --version && \
+echo '[boot] launching streamlit...' && \
+exec python -m streamlit run ui/streamlit_app.py \
+  --server.port $PORT \
+  --server.address 0.0.0.0 \
+  --server.headless true \
+  --browser.gatherUsageStats false"]
