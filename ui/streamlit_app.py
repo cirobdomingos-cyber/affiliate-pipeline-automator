@@ -58,7 +58,38 @@ with st.sidebar:
     limit = st.slider("Products per source", min_value=10, max_value=200, value=50, step=10)
     top_n = st.slider("Show top N", min_value=5, max_value=100, value=25, step=5)
 
+    st.divider()
+    st.subheader("LLM enrichment (V1)")
+    enable_llm = st.toggle(
+        "Use Claude to rank by niche fit",
+        value=False,
+        help=(
+            "Calls Sonnet 4.6 to re-rank the catalog by how well each product "
+            "fits your stated niche. Requires ANTHROPIC_API_KEY in the environment."
+        ),
+    )
+    target_niche = st.text_input(
+        "Target niche",
+        value="",
+        placeholder="e.g. Digital marketing for first-year affiliates",
+        disabled=not enable_llm,
+    )
+    target_audience = st.text_input(
+        "Target audience",
+        value="",
+        placeholder="e.g. 25-35 year olds in Brazil starting their first side hustle",
+        disabled=not enable_llm,
+    )
+
     if st.button("Run discovery", type="primary", use_container_width=True):
+        analyzer = None
+        if enable_llm and target_niche and target_audience:
+            try:
+                from backend.app.llm import build_default_analyzer
+                analyzer = build_default_analyzer()
+            except Exception as e:
+                st.error(f"Could not initialize LLM analyzer: {e}")
+
         with st.spinner("Scraping and scoring..."):
             result = asyncio.run(
                 run_discovery(
@@ -66,13 +97,21 @@ with st.sidebar:
                     limit_per_source=limit,
                     top_n=top_n,
                     use_mock=use_mock,
+                    llm_analyzer=analyzer,
+                    target_niche=target_niche if enable_llm else None,
+                    target_audience=target_audience if enable_llm else None,
                 )
             )
         st.session_state["last_result"] = result
-        st.success(
-            f"Fetched {result.fetched} products from {', '.join(result.sources)} — "
-            f"scored {result.scored}."
+        summary = (
+            f"Fetched {result.fetched} from {', '.join(result.sources)} · "
+            f"scored {result.scored}"
         )
+        if result.llm_signals_filled:
+            summary += f" · LLM analyzed {result.llm_signals_filled} sales pages"
+        if result.niche_rankings:
+            summary += f" · ranked by niche fit ({len(result.niche_rankings)})"
+        st.success(summary)
         if result.errors:
             for err in result.errors:
                 st.warning(err)
@@ -85,6 +124,7 @@ with tab_top:
     if not result:
         st.info("Run discovery from the sidebar to see top picks.")
     else:
+        niche_fit_by_id = {nf.product_id: nf for nf in result.niche_rankings}
         for i, sp in enumerate(result.top, start=1):
             p = sp.product
             s = sp.score
@@ -114,6 +154,10 @@ with tab_top:
                     st.markdown(f"[Open product page]({p.url})")
                 with col_score:
                     st.metric("Score", f"{s.score:.1f} / 100")
+                    fit = niche_fit_by_id.get(p.id)
+                    if fit:
+                        st.metric("Niche fit", f"{fit.fit_score:.0f} / 100")
+                        st.caption(fit.reasoning)
                     with st.expander("Why this score?"):
                         st.write(
                             {
@@ -124,6 +168,10 @@ with tab_top:
                                 "sales_signals": s.components.sales_signals,
                             }
                         )
+                    llm_detail = p.raw.get("sales_page_signals_detail") if p.raw else None
+                    if llm_detail:
+                        with st.expander("LLM sales-page signals"):
+                            st.write(llm_detail)
 
 with tab_browse:
     persisted = repo.top_products(limit=200)

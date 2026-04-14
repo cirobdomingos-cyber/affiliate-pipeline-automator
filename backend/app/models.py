@@ -102,3 +102,35 @@ class ScoredProduct(BaseModel):
 
     product: Product
     score: ProductScore
+
+
+class SalesPageSignals(BaseModel):
+    """LLM-extracted signals from a product's sales page.
+
+    Each field is a 0.0–1.0 score reflecting how strongly the page exhibits
+    that quality. The aggregate `composite` is what the scoring module reads
+    via `Product.sales_page_signals` — it lets the rest of the pipeline stay
+    LLM-agnostic.
+    """
+
+    scarcity: float = Field(ge=0, le=1, description="Scarcity tactics density (limited spots, countdown, last copies)")
+    social_proof: float = Field(ge=0, le=1, description="Testimonials, student count, media mentions density")
+    guarantee_strength: float = Field(ge=0, le=1, description="Money-back guarantee clarity and risk-reversal language")
+    urgency: float = Field(ge=0, le=1, description="Time-bound urgency framing (deadlines, expiring bonuses)")
+    audience_clarity: float = Field(ge=0, le=1, description="How clearly the page names its target audience")
+    composite: float = Field(ge=0, le=1, description="Weighted aggregate the scoring module consumes")
+    notes: str = Field(default="", description="One-sentence summary of why the page is or isn't compelling")
+
+
+class NicheFit(BaseModel):
+    """LLM ranking of how well a product matches an operator's stated niche."""
+
+    product_id: str
+    fit_score: float = Field(ge=0, le=100, description="0–100 — how well this product fits the target niche")
+    reasoning: str = Field(description="One sentence explaining the fit")
+
+
+class NicheFitBatch(BaseModel):
+    """Wrapper so a single LLM call can return rankings for many products."""
+
+    rankings: list[NicheFit]
