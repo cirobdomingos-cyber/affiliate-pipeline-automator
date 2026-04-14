@@ -132,8 +132,8 @@ with st.sidebar:
                 st.warning(err)
 
 
-tab_top, tab_browse, tab_links, tab_traffic = st.tabs(
-    ["Top picks", "Browse persisted catalog", "Link Vault", "Traffic Plan"]
+tab_top, tab_browse, tab_analytics, tab_links, tab_traffic = st.tabs(
+    ["Top picks", "Browse persisted catalog", "Analytics", "Link Vault", "Traffic Plan"]
 )
 
 with tab_top:
@@ -228,6 +228,175 @@ with tab_browse:
                 ),
             },
         )
+
+
+with tab_analytics:
+    st.subheader("Analytics — split by platform")
+    st.caption(
+        "Every view here is colored by source platform. Use the filters to drill "
+        "into one platform or compare niches across all of them."
+    )
+
+    import altair as alt  # bundled with Streamlit
+    import pandas as pd
+
+    analytics_data = repo.top_products(limit=500)
+    if not analytics_data:
+        st.info("No products persisted yet. Run discovery from the sidebar first.")
+    else:
+        df = pd.DataFrame(
+            [
+                {
+                    "Platform": sp.product.platform.value,
+                    "Name": sp.product.name,
+                    "Niche": sp.product.niche.value if sp.product.niche else "unknown",
+                    "Score": sp.score.score,
+                    "Price (R$)": sp.product.price_brl,
+                    "Commission %": sp.product.commission_pct,
+                    "Commission R$": sp.product.commission_brl,
+                    "EPC": sp.score.expected_value_per_visit,
+                    "Popularity": sp.product.popularity,
+                    "Reputation": sp.product.producer_reputation,
+                }
+                for sp in analytics_data
+            ]
+        )
+
+        # -------- Filters --------
+        fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
+        available_platforms = sorted(df["Platform"].unique())
+        selected_platforms = fcol1.multiselect(
+            "Platforms",
+            options=available_platforms,
+            default=available_platforms,
+            format_func=lambda v: v.title(),
+        )
+        available_niches = sorted(df["Niche"].unique())
+        selected_niches = fcol2.multiselect(
+            "Niches",
+            options=available_niches,
+            default=available_niches,
+            format_func=lambda v: v.replace("_", " ").title(),
+        )
+        min_score = fcol3.slider("Min score", 0, 100, 0, 5)
+
+        filtered = df[
+            df["Platform"].isin(selected_platforms)
+            & df["Niche"].isin(selected_niches)
+            & (df["Score"] >= min_score)
+        ]
+
+        if filtered.empty:
+            st.warning("No products match the current filters.")
+        else:
+            # -------- KPI row --------
+            kpi_cols = st.columns(4)
+            kpi_cols[0].metric("Total products", len(filtered))
+            kpi_cols[1].metric("Platforms", filtered["Platform"].nunique())
+            kpi_cols[2].metric("Mean score", f"{filtered['Score'].mean():.1f}")
+            mean_epc = filtered["EPC"].fillna(0).mean()
+            kpi_cols[3].metric("Mean EPC", f"R$ {mean_epc:.4f}")
+
+            # Consistent color mapping across every chart so the platform
+            # palette stays stable when the user toggles filters.
+            platform_color = alt.Color(
+                "Platform:N",
+                scale=alt.Scale(scheme="tableau10"),
+                legend=alt.Legend(title="Platform"),
+            )
+
+            # -------- Chart 1: Product count by platform --------
+            st.markdown("#### Product count by platform")
+            count_chart = (
+                alt.Chart(filtered)
+                .mark_bar()
+                .encode(
+                    x=alt.X("count():Q", title="Products"),
+                    y=alt.Y("Platform:N", sort="-x", title=None),
+                    color=platform_color,
+                    tooltip=["Platform", alt.Tooltip("count():Q", title="Count")],
+                )
+                .properties(height=min(60 * len(selected_platforms), 300))
+            )
+            st.altair_chart(count_chart, use_container_width=True)
+
+            # -------- Chart 2: Score distribution by platform --------
+            st.markdown("#### Score distribution")
+            st.caption(
+                "Each dot is one product. Wider spreads mean the scoring model "
+                "differentiates products on that platform; tight clusters mean "
+                "the signal is compressed (common for live Hotmart when price "
+                "and commission are gated behind affiliate login)."
+            )
+            score_chart = (
+                alt.Chart(filtered)
+                .mark_circle(size=80, opacity=0.7)
+                .encode(
+                    x=alt.X("Score:Q", title="Score (0–100)", scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y("Platform:N", title=None),
+                    color=platform_color,
+                    tooltip=["Name", "Platform", "Niche", "Score", "EPC"],
+                )
+                .properties(height=min(60 * len(selected_platforms), 300))
+            )
+            st.altair_chart(score_chart, use_container_width=True)
+
+            # -------- Chart 3: Top 20 products, colored by platform --------
+            st.markdown("#### Top 20 products by score")
+            top_n = filtered.nlargest(20, "Score")
+            top_chart = (
+                alt.Chart(top_n)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Score:Q", title="Score"),
+                    y=alt.Y(
+                        "Name:N",
+                        sort=alt.SortField(field="Score", order="descending"),
+                        title=None,
+                        axis=alt.Axis(labelLimit=320),
+                    ),
+                    color=platform_color,
+                    tooltip=[
+                        "Name",
+                        "Platform",
+                        "Niche",
+                        alt.Tooltip("Score:Q", format=".1f"),
+                        alt.Tooltip("Price (R$):Q", format=".2f"),
+                        alt.Tooltip("Commission %:Q", format=".1f"),
+                        alt.Tooltip("EPC:Q", format=".4f"),
+                    ],
+                )
+                .properties(height=min(30 * len(top_n), 600))
+            )
+            st.altair_chart(top_chart, use_container_width=True)
+
+            # -------- Chart 4: Niche mix per platform --------
+            st.markdown("#### Niche mix per platform")
+            st.caption(
+                "Where each platform's catalog sits in your niche taxonomy. "
+                "A single platform heavy on one niche is easier to specialize in; "
+                "a platform with broad coverage is better for diversification."
+            )
+            niche_chart = (
+                alt.Chart(filtered)
+                .mark_bar()
+                .encode(
+                    x=alt.X("count():Q", title="Products", stack="normalize"),
+                    y=alt.Y("Platform:N", title=None),
+                    color=alt.Color(
+                        "Niche:N",
+                        scale=alt.Scale(scheme="category10"),
+                        legend=alt.Legend(title="Niche"),
+                    ),
+                    tooltip=[
+                        "Platform",
+                        "Niche",
+                        alt.Tooltip("count():Q", title="Count"),
+                    ],
+                )
+                .properties(height=min(60 * len(selected_platforms), 300))
+            )
+            st.altair_chart(niche_chart, use_container_width=True)
 
 
 with tab_links:
