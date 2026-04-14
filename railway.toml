@@ -1,29 +1,28 @@
 # Railway deploy configuration.
 #
-# This file describes ONE service's build/deploy defaults. This repo is
-# deployed as TWO services in a single Railway project — both pointing at
-# this same repo:
+# Single service, single container. Inside the container, supervisord runs:
+#   - uvicorn (FastAPI) on 127.0.0.1:8000
+#   - streamlit (UI)    on 127.0.0.1:8501
+#   - nginx             on $PORT (public)
 #
-#   affiliate-api   FastAPI (public /r/{slug} and /bp/{slug} + admin API)
-#   affiliate-ui    Streamlit operator dashboard
+# nginx reverse-proxies /r/*, /bp/*, /health, /docs, /mailerlite/* to
+# FastAPI and everything else to Streamlit. See Dockerfile + deploy/ for
+# details. This single-service layout is required because Railway's free
+# and hobby tiers do not allow sharing a single Volume between two
+# services, and the app's DuckDB file is the shared-state anchor.
 #
-# Because railway.toml describes one service, the start command below is
-# the default one (FastAPI). Create the UI service in the Railway dashboard
-# with a Custom Start Command override:
+# Attach a Railway Volume to this service at mount path /data. The app
+# reads DATA_DIR=/data from environment (set it in Variables) to locate
+# the persistent affiliate.duckdb file.
 #
-#   streamlit run ui/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
-#
-# Both services share a Railway Volume mounted at /data and set DATA_DIR=/data
-# so they read and write the same affiliate.duckdb file.
-#
-# Environment variables are set per-service in the Railway dashboard. See
-# .env.example for the full list.
+# Environment variables set in the Railway dashboard — see .env.example
+# for the full list.
 
 [build]
-builder = "NIXPACKS"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
