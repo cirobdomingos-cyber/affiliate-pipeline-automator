@@ -1,19 +1,15 @@
 # Railway deploy configuration.
 #
-# Single service, single container. Inside the container, supervisord runs:
-#   - uvicorn (FastAPI) on 127.0.0.1:8000
-#   - streamlit (UI)    on 127.0.0.1:8501
-#   - nginx             on $PORT (public)
-#
-# nginx reverse-proxies /r/*, /bp/*, /health, /docs, /mailerlite/* to
-# FastAPI and everything else to Streamlit. See Dockerfile + deploy/ for
-# details. This single-service layout is required because Railway's free
-# and hobby tiers do not allow sharing a single Volume between two
-# services, and the app's DuckDB file is the shared-state anchor.
+# Single service, single container, single process: Streamlit. Railway
+# probes Streamlit's native /_stcore/health endpoint as the healthcheck.
 #
 # Attach a Railway Volume to this service at mount path /data. The app
 # reads DATA_DIR=/data from environment (set it in Variables) to locate
 # the persistent affiliate.duckdb file.
+#
+# The FastAPI-owned public routes (/r/{slug}, /bp/{slug}, /mailerlite/*)
+# are NOT reachable from this deploy — they only work when uvicorn is
+# running, which it isn't here. See Dockerfile header for the rationale.
 #
 # Environment variables set in the Railway dashboard — see .env.example
 # for the full list.
@@ -23,7 +19,7 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-healthcheckPath = "/health"
+healthcheckPath = "/_stcore/health"
 healthcheckTimeout = 180
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

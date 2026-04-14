@@ -1,93 +1,92 @@
 # Deploying to Railway
 
-One Railway service, one Dockerfile, one Volume. Both FastAPI and Streamlit
-run inside the same container managed by supervisord; nginx terminates
-on `$PORT` and reverse-proxies to each based on the request path.
+One Railway service, one Docker container, one process: **Streamlit**.
+Railway probes Streamlit's native `/_stcore/health` endpoint for liveness.
+Simple, boring, ships.
 
-## Why single-service
+## What this deploy includes — and what it doesn't
 
-Railway's free and hobby tiers don't allow sharing a single Volume between
-two services, and the DuckDB file is the shared-state anchor between the
-FastAPI backend and the Streamlit admin UI. Single-container co-location is
-the cheapest way around that: one volume, one filesystem, one public URL
-that serves everything.
+| Feature | Works on Railway? |
+|---|---|
+| Streamlit operator dashboard (all 7 phases) | ✅ |
+| Creative brief generation (Haiku) | ✅ |
+| Direct image/video generation (Replicate / fal.ai) | ✅ |
+| MailerLite sync | ✅ |
+| DuckDB persistence (via Volume) | ✅ |
+| **Public `/r/{slug}` tracked redirects** | ❌ not exposed |
+| **Public `/bp/{slug}` bridge pages** | ❌ not exposed |
+| **`/mailerlite/embed/{id}` iframe form** | ❌ not exposed |
 
-If you ever upgrade to a tier that supports cross-service volume sharing
-(or you migrate to Railway Postgres), you can split this into two services
-without touching application code — the container routing logic is all in
-`deploy/nginx.conf.template` and unrelated to the Python app.
+The FastAPI public routes (click tracker and bridge pages) require uvicorn
+to be bound to the public port. This container runs Streamlit on the
+public port, and Streamlit has no way to host FastAPI endpoints inline.
+Running both processes under nginx + supervisord was tried first and
+failed to boot in Railway's environment with no diagnostic logs — the
+pivot to single-process was the pragmatic move.
 
-## How traffic is routed inside the container
+**To actually use `/r/{slug}` and `/bp/{slug}` in production**, one of:
+1. Add a second Railway service running FastAPI + a Railway Postgres
+   addon (not Volume). When the app's `db.py` is ported to Postgres, the
+   two services can run concurrently without the Volume-sharing constraint
+   that killed the first attempt.
+2. Deploy the FastAPI service to a different platform (Fly.io, Render)
+   that allows multi-process containers more predictably.
 
-| Path | Proxied to | Why |
-|---|---|---|
-| `/r/{slug}` | uvicorn `:8000` | Public redirect, tracked |
-| `/bp/{slug}`, `/bp/{slug}/click` | uvicorn `:8000` | Public bridge pages |
-| `/health` | uvicorn `:8000` | Railway healthcheck |
-| `/docs`, `/openapi.json` | uvicorn `:8000` | API docs |
-| `/mailerlite/*` | uvicorn `:8000` | Embed form + opt-in |
-| everything else | streamlit `:8501` | Operator UI (includes WebSockets) |
-
-nginx config is in [deploy/nginx.conf.template](deploy/nginx.conf.template).
-supervisord config is in [deploy/supervisord.conf](deploy/supervisord.conf).
+Locally, everything still works end-to-end — `uvicorn backend.app.main:app`
+hosts the public routes on port 8000, `streamlit run ui/streamlit_app.py`
+hosts the UI on 8503, both read the same local DuckDB file.
 
 ## One-time setup
 
-1. **Create Railway project** (web UI): New Project → Deploy from GitHub
-   repo → pick `affiliate-pipeline-automator`. Railway detects
-   `railway.toml`, reads `Dockerfile`, and starts building. First build
-   takes 3–5 minutes.
+1. **Create Railway project** → Deploy from GitHub repo →
+   `cirobdomingos-cyber/affiliate-pipeline-automator`. Railway reads
+   `railway.toml`, sees `builder = "DOCKERFILE"`, and builds from the
+   root `Dockerfile`. First build is 2–4 minutes.
 
-2. **Create a Volume**: + New → Volume. Name it `data`, size 1 GB.
-   Attach it to the service with mount path `/data`. This is where
+2. **Create a Volume**: + New → Volume. Name `data`, size 1 GB.
+   Attach to the service with mount path `/data`. This is where
    `affiliate.duckdb` lives across deploys.
 
-3. **Set environment variables** (Variables tab on the service). Required:
+3. **Set environment variables** (service → Variables):
 
    ```
    ANTHROPIC_API_KEY=sk-ant-...
    DATA_DIR=/data
-   APP_BASE_URL=https://<your-service-public-url>.up.railway.app
    ```
-
-   `APP_BASE_URL` must match the public domain of *this* service. It's
-   used in the Streamlit UI to build copy-paste `/r/{slug}` and
-   `/bp/{slug}` URLs; if it's wrong, the copied links won't resolve.
 
    Optional:
 
    ```
-   REPLICATE_API_TOKEN=r8_...          # Stage 3 creative generation
-   CREATIVE_PROVIDER=replicate         # force provider when both are set
-   REPLICATE_IMAGE_MODEL=...           # override default model
+   REPLICATE_API_TOKEN=r8_...         # creative generation
+   MAILERLITE_API_KEY=...             # email sync
+   CREATIVE_PROVIDER=replicate        # force provider if both set
+   REPLICATE_IMAGE_MODEL=...          # override defaults
    REPLICATE_VIDEO_MODEL=...
-   MAILERLITE_API_KEY=...              # Stage 5 email
-   FAL_API_KEY=...                     # alternative creative provider
    ```
 
+   `APP_BASE_URL` is irrelevant on Railway since `/r` and `/bp` aren't
+   served here — leave it unset or keep the localhost default.
+
 4. **Expose a public domain**: Settings → Networking → Generate Domain.
-   You'll get `https://<something>.up.railway.app`. Update
-   `APP_BASE_URL` in step 3 to match, then redeploy.
+   The URL goes straight to the Streamlit UI.
 
 5. **Smoke test**:
 
    ```bash
-   curl https://<your-url>.up.railway.app/health
-   # {"status":"ok"}
-
-   # Open the root URL in a browser — should render the Streamlit UI.
-   # Create a managed product, create a tracked short link, hit the
-   # copied /r/{slug} URL — it should 302-redirect to the affiliate URL.
+   curl https://<your-url>.up.railway.app/_stcore/health
+   # ok
    ```
+
+   Open the root URL in a browser — the full Streamlit dashboard should
+   render.
 
 ## Local development parity
 
-The local dev loop is unchanged — you keep running `uvicorn` and
-`streamlit` separately on ports 8000 and 8503. The Dockerfile and
-`deploy/` directory are only used on Railway. `DATA_DIR` defaults to the
-repo root locally, so `affiliate.duckdb` stays where you're used to.
+Unchanged. Run `uvicorn backend.app.main:app --port 8000` and
+`streamlit run ui/streamlit_app.py` as usual. `DATA_DIR` defaults to the
+repo root locally.
 
-To test the production container locally:
+To test the production container shape locally (requires Docker):
 
 ```bash
 docker build -t affiliate-pipeline .
@@ -99,32 +98,22 @@ docker run --rm -p 8080:8080 \
   affiliate-pipeline
 ```
 
-Then hit `http://localhost:8080/` for the UI and
-`http://localhost:8080/health` for the API.
+Then open `http://localhost:8080/`.
 
 ## Updating
 
-Railway auto-deploys on push to the branch the service tracks (default
-`main`). Change to a staging branch if you want a promotion gate.
-
-## Rollback
-
-Railway → service → Deployments → pick a previous green build → Redeploy.
-Because the DuckDB schema is additive-only (no destructive migrations),
-rolling back code is safe even if the schema has moved forward.
+Railway auto-deploys on every push to `main`. Bad deploy? Service →
+Deployments → pick a previous green build → Redeploy.
 
 ## What does NOT work yet
 
-- **No auth on Streamlit.** The operator UI is publicly reachable once
-  the domain is generated. Either keep the URL private, or add Streamlit
-  basic auth / Railway private networking before sharing it anywhere.
-- **DuckDB single-writer constraint.** Two processes (uvicorn for click
-  events and streamlit for operator writes) share one file. They rarely
-  collide in practice but under heavy contention you may see a transient
-  `IOError` on writes. Postgres migration is the permanent fix.
+- **No auth on the dashboard.** Anyone with the Railway URL can see and
+  edit your managed products. Keep the URL private or add Streamlit
+  basic auth / Railway private networking before sharing.
+- **Public affiliate tracking links aren't hosted here.** See the table
+  at the top. Migration path is Postgres + second service.
 - **No CI gate.** Every push deploys. Add GitHub Actions (`pytest` +
-  `ruff`) as a merge gate before making this a shared project.
-- **Container memory**. Three processes (nginx + uvicorn + streamlit) in
-  one container use ~400–600 MB at idle. Railway's free tier caps at
-  512 MB per service — you may need to upgrade to Hobby ($5/mo) if the
-  service gets OOM-killed during creative generation spikes.
+  `ruff`) as a merge gate before this becomes a shared project.
+- **Container memory**. Streamlit + dependencies ~300–500 MB. Railway
+  free tier caps at 512 MB — you may hit the Hobby plan ($5/mo) under
+  creative generation load.
