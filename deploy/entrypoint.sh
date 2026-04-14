@@ -9,14 +9,23 @@ set -eu
 : "${PORT:=8080}"
 export PORT
 
+echo "[entrypoint] PORT=$PORT"
+echo "[entrypoint] DATA_DIR=${DATA_DIR:-<unset>}"
+
+# Write directly to conf.d/ which is always included by Debian's default
+# nginx.conf. Nuke the stock sites-enabled/default so there's no listener
+# conflict on port 80.
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf
+
 envsubst '${PORT}' \
     < /etc/nginx/templates/default.conf.template \
-    > /etc/nginx/sites-available/default
+    > /etc/nginx/conf.d/default.conf
 
-# Debian's default nginx.conf already includes sites-enabled/default which
-# symlinks to sites-available/default, so we don't need to touch the main
-# config. Verify syntax before handing off so bad configs fail fast with a
-# clear error in Railway logs rather than a supervisord restart loop.
+echo "[entrypoint] nginx config rendered:"
+cat /etc/nginx/conf.d/default.conf
+
+echo "[entrypoint] nginx -t"
 nginx -t
 
+echo "[entrypoint] launching supervisord"
 exec supervisord -c /etc/supervisor/conf.d/supervisord.conf
