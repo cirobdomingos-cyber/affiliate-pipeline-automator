@@ -1,28 +1,61 @@
-"""Hotmart marketplace scraper.
+"""Hotmart marketplace scraper — real data via Next.js hydration blob.
 
-Honest scope note: Hotmart's public marketplace is server-rendered HTML on
-some surfaces and JS-hydrated on others, and the exact selectors drift.
-This adapter is structured so that:
+# The breakthrough
 
-1. The HTTP fetch and the HTML parse are separable. Tests can pass HTML
-   directly to `parse_marketplace_html` without touching the network.
-2. If selectors break, only `parse_marketplace_html` needs to change — the
-   rest of the pipeline (scoring, persistence, UI) is untouched.
-3. For the MVP demo path, operators can use `MockScraper` to populate the
-   pipeline with realistic fixture data while Hotmart selectors are tuned.
+The public `https://hotmart.com/pt-br/marketplace` page is a Next.js React SPA.
+At first glance it looks unscrapable without Playwright: the HTML shell
+has no product cards, just a skeleton + JS bundles that render content
+client-side. CSS selectors against the initial HTML return zero cards.
 
-V1 will replace selector-based parsing with Hotmart's official affiliate
-API once credentials are wired in.
+But Next.js ships every page with a **hydration blob** — a JSON document
+embedded in a `<script>` tag containing all the server-side data the page
+was rendered with. The client uses this to avoid re-fetching on mount.
+For `/pt-br/marketplace` that blob includes a `bestSellers` list of 10 real
+products, complete with title, category, producer name, rating, review
+count, slug, and description. No JavaScript execution required.
+
+This is the right way to scrape any Next.js site:
+
+1. Fetch the HTML with plain httpx
+2. Find the `<script>` whose content starts with `{"props"` (the Next.js
+   hydration convention)
+3. Parse it as JSON
+4. Walk to `props.pageProps.bestSellers` (or whatever key the page exposes)
+5. Map each product object into your domain model
+
+It's faster, more reliable, and more ethical than launching a headless
+browser — you're using the same data the page is already shipping to
+every visitor.
+
+# What we can and cannot extract
+
+Visible to unauthenticated visitors on the public marketplace:
+- Title, category slug, topic slug
+- Producer (ownerName) and producer reference code
+- Rating (0–5) and total review count
+- Slug (for the public product URL)
+- Description (up to ~500 chars of marketing copy)
+- Language / locale
+
+**Not** visible — gated behind affiliate login:
+- Price in BRL
+- Commission percentage
+- Gravity / heat / sales-volume metrics
+
+For missing fields the scoring module already degrades gracefully. We
+synthesize a `popularity` number from `rating × log(total_reviews + 1)`
+so products with real traction outrank zero-review products.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import re
 from typing import Any
 
 import httpx
-from selectolax.parser import HTMLParser
 
 from ..models import Niche, Platform, Product
 from .base import ScraperError, ScraperProtocol
@@ -36,9 +69,11 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 _PRICE_RE = re.compile(r"R\$\s*([\d\.]+,\d{2})")
+_SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.DOTALL)
 
 
 def _parse_brl(text: str | None) -> float | None:
+    """Parse a BRL string like 'R$ 1.997,00' into 1997.0. Kept for other scrapers."""
     if not text:
         return None
     m = _PRICE_RE.search(text)
@@ -47,93 +82,156 @@ def _parse_brl(text: str | None) -> float | None:
     return float(m.group(1).replace(".", "").replace(",", "."))
 
 
-def _classify_niche(category: str | None) -> Niche | None:
-    if not category:
+# Map Hotmart's category/topic slugs to our internal Niche taxonomy.
+# Both `category` (broad: "education", "finance", "health") and `topic`
+# (fine-grained: "investimentos", "marketing-digital", "emagrecimento") show
+# up in the hydration blob — we prefer `topic` for precision and fall back
+# to `category`.
+def _classify_niche(category_or_topic: str | None) -> Niche | None:
+    if not category_or_topic:
         return None
-    c = category.lower()
-    if any(k in c for k in ("finan", "invest", "dinheiro", "renda")):
+    c = category_or_topic.lower()
+    if any(k in c for k in ("finan", "invest", "dinheiro", "renda", "bitcoin", "trading")):
         return Niche.FINANCE
-    if any(k in c for k in ("marketing", "vendas", "tráfego", "trafego")):
+    if any(k in c for k in ("marketing", "vendas", "tráfego", "trafego", "afiliad", "trafego-pago")):
         return Niche.DIGITAL_MARKETING
-    if any(k in c for k in ("saúde", "saude", "fitness", "emagrec", "dieta")):
+    if any(k in c for k in ("saúde", "saude", "fitness", "emagrec", "dieta", "nutri")):
         return Niche.HEALTH
-    if any(k in c for k in ("tecnologia", "saas", "software", "código", "codigo")):
+    if any(k in c for k in ("tecnologia", "saas", "software", "código", "codigo", "programa")):
         return Niche.TECH_SAAS
     if any(k in c for k in ("negócio", "negocio", "empreend", "business")):
         return Niche.BUSINESS
     return Niche.OTHER
 
 
-def parse_marketplace_html(html: str, *, limit: int = 50) -> list[Product]:
-    """Parse a Hotmart marketplace HTML payload into Product objects.
+def _popularity_from_rating(rating: float | None, total_reviews: int | None) -> float | None:
+    """Synthesize a comparable popularity number from rating + review count.
 
-    Tolerant by design: any card that doesn't yield a name+url is skipped
-    rather than failing the whole batch. A platform-rendered page should
-    yield dozens of cards; if it yields zero, the caller should treat that
-    as a selector regression and switch to MockScraper for the demo while
-    the selectors are repaired.
+    Hotmart's public blob exposes rating (0–5) and total_reviews but not any
+    raw popularity/heat/gravity metric. A product with 2000 reviews at 4.8★
+    should outrank one with 20 reviews at 4.9★ because the former has
+    actually been tested by buyers. `rating × log1p(reviews)` gives us that:
+    review count dominates at scale, rating dominates when review counts
+    are small.
     """
-    tree = HTMLParser(html)
+    if rating is None or total_reviews is None:
+        return None
+    try:
+        return float(rating) * math.log1p(max(int(total_reviews), 0))
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_hydration_json(html: str) -> dict[str, Any] | None:
+    """Find the Next.js hydration `<script>` tag and parse it."""
+    for match in _SCRIPT_RE.finditer(html):
+        content = match.group(1).lstrip()
+        if content.startswith('{"props"'):
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as exc:
+                logger.warning("Hotmart hydration JSON parse failed: %s", exc)
+                return None
+    return None
+
+
+def _find_products_in_tree(tree: Any) -> list[dict]:
+    """DFS the hydration tree for the first list whose items contain
+    `producerReferenceCode`. Tolerates Hotmart reshuffling the blob shape
+    (bestSellers → featured → products → ...).
+    """
+    if isinstance(tree, list):
+        if tree and isinstance(tree[0], dict) and "producerReferenceCode" in tree[0]:
+            return tree
+        for item in tree:
+            result = _find_products_in_tree(item)
+            if result:
+                return result
+    elif isinstance(tree, dict):
+        for value in tree.values():
+            result = _find_products_in_tree(value)
+            if result:
+                return result
+    return []
+
+
+def _product_from_json(item: dict) -> Product | None:
+    try:
+        ref = item.get("producerReferenceCode")
+        if not ref:
+            return None
+
+        title = item.get("title") or item.get("name") or ""
+        if not title:
+            return None
+
+        slug = item.get("slug") or ""
+        url = (
+            f"https://www.hotmart.com/product/{slug}" if slug
+            else f"https://hotmart.com/pt-br/marketplace/produtos/{ref}"
+        )
+
+        topic = item.get("topic")
+        category = topic or item.get("category")
+        niche = _classify_niche(topic) or _classify_niche(item.get("category"))
+
+        rating = item.get("rating")
+        total_reviews = item.get("totalReviews")
+        popularity = _popularity_from_rating(rating, total_reviews)
+
+        owner = item.get("owner") or {}
+        producer_name = item.get("ownerName") or owner.get("name")
+
+        # Derive a reputation proxy from rating (0–5 → 0–1). Review count
+        # is already folded into popularity, so this is purely quality.
+        producer_reputation = (float(rating) / 5.0) if isinstance(rating, (int, float)) else None
+
+        return Product(
+            platform=Platform.HOTMART,
+            external_id=str(ref),
+            name=title,
+            url=url,
+            category=category,
+            niche=niche,
+            producer_name=producer_name,
+            producer_reputation=producer_reputation,
+            popularity=popularity,
+            # Price and commission are gated behind affiliate login — leave None.
+            price_brl=None,
+            commission_pct=None,
+            raw={
+                "source": "hotmart_marketplace_nextdata",
+                "description": item.get("description"),
+                "rating": rating,
+                "total_reviews": total_reviews,
+                "topic": topic,
+                "hotmart_category": item.get("category"),
+                "slug": slug,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Skipping malformed Hotmart product object: %s", exc)
+        return None
+
+
+def parse_marketplace_html(html: str, *, limit: int = 50) -> list[Product]:
+    """Entry point — pure function from HTML to Product list.
+
+    The old version scraped CSS-selected product cards, which never existed
+    in the server-rendered HTML. The new version parses Next.js hydration
+    JSON, which is the actual data source the React app uses. Same return
+    type, same call site, completely different internals.
+    """
+    tree = _extract_hydration_json(html)
+    if tree is None:
+        return []
+
+    raw_products = _find_products_in_tree(tree)
     products: list[Product] = []
-
-    # Hotmart cards historically use [data-test="product-card"] or
-    # article.product-card. We try a small ladder of selectors.
-    nodes = (
-        tree.css('[data-test="product-card"]')
-        or tree.css("article.product-card")
-        or tree.css("a.product-card")
-    )
-
-    for node in nodes[:limit]:
-        try:
-            name_node = node.css_first("h3, h2, .product-name")
-            link_node = node.css_first("a")
-            if not name_node or not link_node:
-                continue
-            name = name_node.text(strip=True)
-            url = link_node.attributes.get("href") or ""
-            if not name or not url:
-                continue
-            if url.startswith("/"):
-                url = f"https://hotmart.com{url}"
-
-            external_id = url.rstrip("/").split("/")[-1]
-
-            price_node = node.css_first(".price, [data-test='price']")
-            price = _parse_brl(price_node.text() if price_node else None)
-
-            commission_node = node.css_first(".commission, [data-test='commission']")
-            commission_pct = _parse_brl(commission_node.text() if commission_node else None)
-
-            popularity_node = node.css_first(".heat, [data-test='heat']")
-            popularity_text = popularity_node.text(strip=True) if popularity_node else None
-            popularity = float(popularity_text) if popularity_text and popularity_text.replace(".", "").isdigit() else None
-
-            category_node = node.css_first(".category, [data-test='category']")
-            category = category_node.text(strip=True) if category_node else None
-
-            producer_node = node.css_first(".producer, [data-test='producer']")
-            producer = producer_node.text(strip=True) if producer_node else None
-
-            products.append(
-                Product(
-                    platform=Platform.HOTMART,
-                    external_id=external_id,
-                    name=name,
-                    url=url,
-                    category=category,
-                    niche=_classify_niche(category),
-                    price_brl=price,
-                    commission_pct=commission_pct,
-                    popularity=popularity,
-                    producer_name=producer,
-                    raw={"source": "hotmart_marketplace_html"},
-                )
-            )
-        except Exception as exc:  # noqa: BLE001 — tolerant per-card
-            logger.warning("Skipping malformed Hotmart card: %s", exc)
-            continue
-
+    for item in raw_products[:limit]:
+        product = _product_from_json(item)
+        if product is not None:
+            products.append(product)
     return products
 
 
@@ -159,7 +257,8 @@ class HotmartScraper(ScraperProtocol):
         if not products:
             raise ScraperError(
                 "Hotmart marketplace returned 0 parseable products. "
-                "Selectors likely drifted — fall back to MockScraper while repairing."
+                "The Next.js hydration blob shape likely changed — inspect the HTML "
+                "and update _find_products_in_tree if needed."
             )
         return products
 
@@ -169,4 +268,10 @@ class HotmartScraper(ScraperProtocol):
         return parse_marketplace_html(html, limit=limit)
 
 
-__all__ = ["HotmartScraper", "parse_marketplace_html"]
+__all__ = [
+    "HotmartScraper",
+    "parse_marketplace_html",
+    "_classify_niche",
+    "_parse_brl",
+    "_popularity_from_rating",
+]
