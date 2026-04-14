@@ -1,0 +1,160 @@
+{
+  "SearchResult": {
+    "TotalResultCount": 8,
+    "SearchURL": "https://www.amazon.com.br/s?k=livros+mais+vendidos&tag=demo-20",
+    "Items": [
+      {
+        "ASIN": "B07WJNBXGQ",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B07WJNBXGQ?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Mindset: A nova psicologia do sucesso" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Editora Objetiva" },
+            "Manufacturer": { "DisplayValue": "Editora Objetiva" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Book" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            {
+              "Price": {
+                "Amount": 44.90,
+                "Currency": "BRL",
+                "DisplayAmount": "R$ 44,90"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "ASIN": "B085TZLCHR",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B085TZLCHR?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Pai Rico, Pai Pobre - Edição 20 anos" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Alta Books" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Book" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 39.90, "Currency": "BRL", "DisplayAmount": "R$ 39,90" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B08KHCB5WL",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B08KHCB5WL?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Kindle Paperwhite (11ª geração) 8GB - à prova d'água" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Amazon" },
+            "Manufacturer": { "DisplayValue": "Amazon" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Electronics" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 549.00, "Currency": "BRL", "DisplayAmount": "R$ 549,00" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B09FZG5NN3",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B09FZG5NN3?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Fone de Ouvido JBL Tune 510BT Bluetooth" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "JBL" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Electronics" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 199.00, "Currency": "BRL", "DisplayAmount": "R$ 199,00" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B07QHFYQ2Z",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B07QHFYQ2Z?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Air Fryer Mondial Family 4L" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Mondial" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Kitchen" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 299.00, "Currency": "BRL", "DisplayAmount": "R$ 299,00" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B08DF2KYQV",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B08DF2KYQV?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Whey Protein Concentrado Growth 1kg" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Growth Supplements" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "HealthPersonalCare" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 129.00, "Currency": "BRL", "DisplayAmount": "R$ 129,00" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B09NXXBPFK",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B09NXXBPFK?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Tênis Nike Revolution 6 Masculino" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Nike" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Shoes" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 279.00, "Currency": "BRL", "DisplayAmount": "R$ 279,00" } }
+          ]
+        }
+      },
+      {
+        "ASIN": "B0BQRP6JF9",
+        "DetailPageURL": "https://www.amazon.com.br/dp/B0BQRP6JF9?tag=demo-20",
+        "ItemInfo": {
+          "Title": { "DisplayValue": "Notebook Lenovo IdeaPad 3i Intel Core i5 8GB 512GB SSD" },
+          "ByLineInfo": {
+            "Brand": { "DisplayValue": "Lenovo" }
+          },
+          "Classifications": {
+            "ProductGroup": { "DisplayValue": "Personal Computer" }
+          }
+        },
+        "Offers": {
+          "Listings": [
+            { "Price": { "Amount": 3299.00, "Currency": "BRL", "DisplayAmount": "R$ 3.299,00" } }
+          ]
+        }
+      }
+    ]
+  }
+}

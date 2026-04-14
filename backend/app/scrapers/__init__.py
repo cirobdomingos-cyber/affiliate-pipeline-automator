@@ -1,3 +1,4 @@
+from .amazon import AmazonScraper, MockAmazonScraper
 from .base import ScraperProtocol, ScraperError
 from .eduzz import EduzzScraper
 from .hotmart import HotmartScraper
@@ -10,5 +11,7 @@ __all__ = [
     "HotmartScraper",
     "MonetizzeScraper",
     "EduzzScraper",
+    "AmazonScraper",
     "MockScraper",
+    "MockAmazonScraper",
 ]

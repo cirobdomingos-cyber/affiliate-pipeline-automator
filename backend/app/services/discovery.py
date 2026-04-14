@@ -16,7 +16,13 @@ from ..db import ProductRepository
 from ..llm import LLMAnalyzer
 from ..models import NicheFit, Product, ScoredProduct
 from ..scoring import DEFAULT_WEIGHTS, ScoringWeights, rank_products
-from ..scrapers import HotmartScraper, MockScraper, ScraperProtocol
+from ..scrapers import (
+    AmazonScraper,
+    HotmartScraper,
+    MockAmazonScraper,
+    MockScraper,
+    ScraperProtocol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +38,22 @@ class DiscoveryResult(BaseModel):
 
 
 def _default_scrapers(use_mock: bool) -> list[ScraperProtocol]:
+    """Pick the scraper set based on mode.
+
+    Mock mode returns Hotmart + Amazon fixtures so the demo shows multi-platform
+    data. Live mode always includes Hotmart, and only adds Amazon when
+    PA-API credentials are present in the environment — otherwise the Amazon
+    scraper would always fail with a credentials error and pollute the
+    discovery result.
+    """
     if use_mock:
-        return [MockScraper()]
-    return [HotmartScraper()]
+        return [MockScraper(), MockAmazonScraper()]
+
+    scrapers: list[ScraperProtocol] = [HotmartScraper()]
+    amazon = AmazonScraper()
+    if amazon.credentials_configured:
+        scrapers.append(amazon)
+    return scrapers
 
 
 async def run_discovery(

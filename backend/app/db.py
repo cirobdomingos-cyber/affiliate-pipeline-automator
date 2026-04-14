@@ -81,19 +81,35 @@ CREATE TABLE IF NOT EXISTS product_scores (
 class ProductRepository:
     def __init__(self, db_path: Path | str = _DEFAULT_DB_PATH) -> None:
         self._db_path = str(db_path)
-        with self._connect() as con:
-            con.execute(_SCHEMA)
+        # Touch a connection once so the file exists and the schema is applied.
+        # _connect() itself re-runs the (idempotent) schema on every call.
+        with self._connect():
+            pass
 
     @contextmanager
     def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
+        # Run schema creation on every connection. Idempotent (CREATE TABLE
+        # IF NOT EXISTS) and cheap. Protects against the file being deleted
+        # out from under a cached repository instance — without this,
+        # Streamlit's @st.cache_resource plus a manual `rm affiliate.duckdb`
+        # leaves the repo holding a path to a file that has no schema, and
+        # DuckDB's replacement scan then tries to interpret local Python
+        # variables named like table names (e.g. `items`) as data sources
+        # and fails with a cryptic error.
         con = duckdb.connect(self._db_path)
         try:
+            con.execute(_SCHEMA)
             yield con
         finally:
             con.close()
 
-    def upsert_products(self, products: list[Product]) -> int:
-        if not products:
+    def upsert_products(self, items: list[Product]) -> int:
+        # Parameter is named `items` (not `products`) to avoid colliding with
+        # the `products` table name in SQL. DuckDB's replacement scan walks
+        # the caller's Python frame looking for identifiers that match table
+        # names; a local variable named `products` would be misinterpreted as
+        # a data source if the schema ever went missing.
+        if not items:
             return 0
         rows = [
             (
@@ -114,7 +130,7 @@ class ProductRepository:
                 p.scraped_at,
                 json.dumps(p.raw, default=str),
             )
-            for p in products
+            for p in items
         ]
         with self._connect() as con:
             # DuckDB upsert via DELETE + INSERT keyed on id.
@@ -224,13 +240,16 @@ class LinkRepository:
 
     def __init__(self, db_path: Path | str = _DEFAULT_DB_PATH) -> None:
         self._db_path = str(db_path)
+        # First connection runs the schema; subsequent connections repeat it
+        # idempotently in _connect() for the same reason as ProductRepository.
         with self._connect() as con:
-            con.execute(_SCHEMA)
+            pass
 
     @contextmanager
     def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
         con = duckdb.connect(self._db_path)
         try:
+            con.execute(_SCHEMA)
             yield con
         finally:
             con.close()

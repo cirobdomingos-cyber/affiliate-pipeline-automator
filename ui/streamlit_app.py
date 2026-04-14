@@ -168,7 +168,14 @@ with tab_top:
                         f"R$ {s.expected_value_per_visit:,.4f}",
                         help="Expected value per visit at 2% assumed conversion rate.",
                     )
-                    st.markdown(f"[Open product page]({p.url})")
+                    is_mock = (p.raw or {}).get("source") == "mock_fixture"
+                    if is_mock:
+                        st.markdown(
+                            f"[Demo link ↗]({p.url}) "
+                            ":gray[_(mock fixture — points at example.com)_]"
+                        )
+                    else:
+                        st.markdown(f"[Open product page ↗]({p.url})")
                 with col_score:
                     st.metric("Score", f"{s.score:.1f} / 100")
                     fit = niche_fit_by_id.get(p.id)
@@ -209,7 +216,18 @@ with tab_browse:
             }
             for sp in persisted
         ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "URL": st.column_config.LinkColumn(
+                    "URL",
+                    help="Click to open the product page (mock fixture URLs point at example.com)",
+                    display_text="Open ↗",
+                ),
+            },
+        )
 
 
 with tab_links:
