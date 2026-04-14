@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+*.duckdb
+*.duckdb.wal
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+dist/
+build/
+*.egg-info/
+.streamlit/secrets.toml
