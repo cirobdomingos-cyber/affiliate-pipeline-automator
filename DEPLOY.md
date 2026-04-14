@@ -1,13 +1,21 @@
 # Deploying to Railway
 
 **Two Railway services in one project, backed by a shared Railway Postgres
-addon.** Both services run from the same Docker image (single Dockerfile
-at repo root), but override the start command to play different roles:
+addon.** Both services run from the same Docker image and the same start
+command (`./start.sh`). Which role they play is controlled by a single
+env var, `SERVICE_ROLE`:
 
-| Service | Start command | Public URL serves |
-|---|---|---|
-| `affiliate-ui` | default (Dockerfile CMD → Streamlit) | Operator dashboard |
-| `affiliate-api` | `sh -c "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"` | `/r/{slug}`, `/bp/{slug}`, `/mailerlite/embed/*` |
+| Service | `SERVICE_ROLE` | Healthcheck path | Public URL serves |
+|---|---|---|---|
+| `affiliate-ui` | `ui` (or unset) | `/_stcore/health` | Operator dashboard |
+| `affiliate-api` | `api` | `/health` | `/r/{slug}`, `/bp/{slug}`, `/mailerlite/embed/*` |
+
+This avoids the Railway "Custom Start Command" field entirely — both
+services inherit the start command from `railway.toml`, and the
+dispatch happens inside `start.sh`. Earlier attempts at overriding the
+start command per-service via Railway's UI kept getting a literal
+`$PORT` passed to the underlying binary (no shell expansion), which
+is exactly what `start.sh` fixes.
 
 Both services read/write the same Postgres database via the
 `DATABASE_URL` env var, which Railway injects automatically when you
@@ -67,20 +75,22 @@ MAILERLITE_API_KEY=...               # optional, email sync
 Back in the project: + New → **GitHub Repo** → same
 `affiliate-pipeline-automator` repo. Rename it to `affiliate-api`.
 
-In `affiliate-api` → Settings → **Custom Start Command**:
+**Leave the Custom Start Command FIELD EMPTY.** Both services use the
+same `./start.sh` from `railway.toml`; the dispatch is done by env var.
+
+In `affiliate-api` → Settings → **Healthcheck Path**: override to
+`/health` (the Streamlit default `/_stcore/health` doesn't exist on
+FastAPI).
+
+In `affiliate-api` → Variables, set:
 
 ```
-sh -c "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+SERVICE_ROLE=api                     # this is what makes start.sh run uvicorn
+ANTHROPIC_API_KEY=sk-ant-...         # needed for /traffic and other LLM routes
 ```
 
-In `affiliate-api` → Settings → **Healthcheck Path**: `/health`.
-
-In `affiliate-api` → Variables, add the same reference to
-`DATABASE_URL` (same Postgres) plus any API keys the API actually uses:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...         # needed if you hit /traffic or LLM routes
-```
+Plus Add Reference → `DATABASE_URL` linking to the same Postgres addon
+the UI service uses.
 
 ### 6. Expose the API's public domain
 

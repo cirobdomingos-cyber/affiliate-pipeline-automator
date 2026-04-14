@@ -1,21 +1,20 @@
 # Railway deploy configuration.
 #
-# This file describes the DEFAULT service (affiliate-ui = Streamlit).
-# The project is meant to have TWO services deployed from the same repo:
+# Both Railway services in this project use the SAME Dockerfile image
+# and the SAME start command: `./start.sh`. The script dispatches on
+# the `SERVICE_ROLE` env var (set in Railway Variables per-service):
 #
-#   affiliate-ui    default Dockerfile CMD → Streamlit on $PORT
-#                   healthcheck: /_stcore/health
+#   SERVICE_ROLE=ui    (default) → Streamlit operator dashboard
+#                                  healthcheck: /_stcore/health
+#   SERVICE_ROLE=api             → uvicorn FastAPI public routes
+#                                  (override healthcheckPath to /health
+#                                   in the api service's Settings)
 #
-#   affiliate-api   Custom Start Command override (set in Railway UI):
-#                     sh -c "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
-#                   healthcheck: /health
-#
-# Both services share a single Railway Postgres addon via the
-# DATABASE_URL env var (Railway injects it automatically when you attach
-# the addon and reference it under Variables → Add Reference).
-#
-# When DATABASE_URL is set, backend/app/db.py switches from DuckDB to
-# Postgres via its built-in adapter. No Volume is needed.
+# Both services share a single Railway Postgres addon via DATABASE_URL
+# (Railway injects it automatically when you attach the addon and
+# reference it under Variables → Add Reference). When DATABASE_URL is
+# set, backend/app/db.py switches from DuckDB to Postgres via its
+# adapter. No Volume is needed.
 #
 # Full step-by-step: see DEPLOY.md.
 
@@ -24,6 +23,7 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
+startCommand = "./start.sh"
 healthcheckPath = "/_stcore/health"
 healthcheckTimeout = 180
 restartPolicyType = "ON_FAILURE"
