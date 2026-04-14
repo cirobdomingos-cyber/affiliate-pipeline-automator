@@ -134,3 +134,68 @@ class NicheFitBatch(BaseModel):
     """Wrapper so a single LLM call can return rankings for many products."""
 
     rankings: list[NicheFit]
+
+
+class LinkStatus(StrEnum):
+    """Approval state of an affiliate link on a platform.
+
+    Most Brazilian networks (Hotmart, Monetizze, Eduzz) require per-producer
+    affiliate approval — your link is worthless until `APPROVED`. Tracking
+    status explicitly lets the Link Vault flag pending/rejected links so an
+    operator doesn't waste ad spend pointing traffic at a dead URL.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class AffiliateLink(BaseModel):
+    """A single affiliate link stored in the vault.
+
+    The `raw_url` is the bare affiliate URL from the platform — no UTM params
+    yet. `TrackedLink` composes `raw_url + UTMParams` into a final URL to use
+    in ads, bios, or email campaigns. Keeping them separate means the same
+    affiliate link can be reused across campaigns with different UTM tags.
+    """
+
+    model_config = ConfigDict(frozen=False)
+
+    id: str = Field(description="Stable ID — hash of (platform, raw_url).")
+    product_id: str | None = Field(
+        default=None,
+        description="Optional link back to a Product from Stage 1 discovery.",
+    )
+    platform: Platform
+    label: str = Field(description="Operator-chosen name — e.g. 'Curso X - Instagram bio'.")
+    raw_url: str = Field(description="Base affiliate URL without UTM params.")
+    approval_status: LinkStatus = LinkStatus.PENDING
+    approved_at: datetime | None = None
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UTMParams(BaseModel):
+    """UTM parameters for a tracked campaign URL.
+
+    Field names match Google Analytics conventions. Values are normalized
+    (lowercased, spaces → hyphens) by the UTM builder so that
+    'Instagram Bio' and 'instagram-bio' land in the same analytics bucket.
+    """
+
+    source: str = Field(description="utm_source — the channel (instagram, google, tiktok, email).")
+    medium: str = Field(description="utm_medium — paid/organic/email/cpc/social.")
+    campaign: str = Field(description="utm_campaign — the campaign name.")
+    term: str | None = Field(default=None, description="utm_term — paid search keyword.")
+    content: str | None = Field(default=None, description="utm_content — creative variant.")
+
+
+class TrackedLink(BaseModel):
+    """The result of composing an AffiliateLink + UTMParams into a final URL."""
+
+    affiliate_link_id: str
+    final_url: str
+    utm: UTMParams

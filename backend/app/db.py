@@ -16,7 +16,15 @@ from typing import Iterator
 
 import duckdb
 
-from .models import Platform, Product, ProductScore, ScoredProduct, ScoreBreakdown
+from .models import (
+    AffiliateLink,
+    LinkStatus,
+    Platform,
+    Product,
+    ProductScore,
+    ScoredProduct,
+    ScoreBreakdown,
+)
 
 
 _DEFAULT_DB_PATH = Path("affiliate.duckdb")
@@ -40,6 +48,20 @@ CREATE TABLE IF NOT EXISTS products (
     sales_page_signals DOUBLE,
     scraped_at TIMESTAMP NOT NULL,
     raw JSON
+);
+
+CREATE TABLE IF NOT EXISTS affiliate_links (
+    id TEXT PRIMARY KEY,
+    product_id TEXT,
+    platform TEXT NOT NULL,
+    label TEXT NOT NULL,
+    raw_url TEXT NOT NULL,
+    approval_status TEXT NOT NULL,
+    approved_at TIMESTAMP,
+    notes TEXT,
+    tags JSON,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS product_scores (
@@ -190,3 +212,108 @@ class ProductRepository:
             )
             out.append(ScoredProduct(product=product, score=score))
         return out
+
+
+class LinkRepository:
+    """CRUD for the affiliate link vault.
+
+    Shares the same DuckDB file as ProductRepository. Links reference
+    products by `product_id` but are not a foreign key — an operator can
+    stash a link for a product that isn't in the discovery catalog yet.
+    """
+
+    def __init__(self, db_path: Path | str = _DEFAULT_DB_PATH) -> None:
+        self._db_path = str(db_path)
+        with self._connect() as con:
+            con.execute(_SCHEMA)
+
+    @contextmanager
+    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
+        con = duckdb.connect(self._db_path)
+        try:
+            yield con
+        finally:
+            con.close()
+
+    def upsert(self, link: AffiliateLink) -> None:
+        row = (
+            link.id,
+            link.product_id,
+            link.platform.value,
+            link.label,
+            link.raw_url,
+            link.approval_status.value,
+            link.approved_at,
+            link.notes,
+            json.dumps(link.tags),
+            link.created_at,
+            link.updated_at,
+        )
+        with self._connect() as con:
+            con.execute("DELETE FROM affiliate_links WHERE id = ?", [link.id])
+            con.execute(
+                "INSERT INTO affiliate_links VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                row,
+            )
+
+    def get(self, link_id: str) -> AffiliateLink | None:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT * FROM affiliate_links WHERE id = ?", [link_id]
+            ).fetchone()
+        return self._row_to_link(row) if row else None
+
+    def list(
+        self,
+        *,
+        status: LinkStatus | None = None,
+        platform: Platform | None = None,
+    ) -> list[AffiliateLink]:
+        sql = "SELECT * FROM affiliate_links"
+        clauses = []
+        params: list = []
+        if status is not None:
+            clauses.append("approval_status = ?")
+            params.append(status.value)
+        if platform is not None:
+            clauses.append("platform = ?")
+            params.append(platform.value)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC"
+        with self._connect() as con:
+            rows = con.execute(sql, params).fetchall()
+        return [self._row_to_link(r) for r in rows]
+
+    def set_status(self, link_id: str, status: LinkStatus) -> AffiliateLink | None:
+        link = self.get(link_id)
+        if link is None:
+            return None
+        link.approval_status = status
+        from datetime import datetime, timezone
+        link.updated_at = datetime.now(timezone.utc)
+        if status == LinkStatus.APPROVED and link.approved_at is None:
+            link.approved_at = link.updated_at
+        self.upsert(link)
+        return link
+
+    def delete(self, link_id: str) -> bool:
+        with self._connect() as con:
+            cur = con.execute("DELETE FROM affiliate_links WHERE id = ?", [link_id])
+            return cur.fetchall() is not None  # DuckDB returns empty list on DELETE
+
+    @staticmethod
+    def _row_to_link(row) -> AffiliateLink:
+        return AffiliateLink(
+            id=row[0],
+            product_id=row[1],
+            platform=Platform(row[2]),
+            label=row[3],
+            raw_url=row[4],
+            approval_status=LinkStatus(row[5]),
+            approved_at=row[6],
+            notes=row[7] or "",
+            tags=json.loads(row[8]) if row[8] else [],
+            created_at=row[9],
+            updated_at=row[10],
+        )

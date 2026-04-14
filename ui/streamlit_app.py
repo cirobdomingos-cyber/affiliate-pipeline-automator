@@ -20,8 +20,10 @@ import streamlit as st
 # Allow `streamlit run ui/streamlit_app.py` from repo root without install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.app.db import ProductRepository  # noqa: E402
+from backend.app.db import LinkRepository, ProductRepository  # noqa: E402
+from backend.app.models import LinkStatus, Platform, UTMParams  # noqa: E402
 from backend.app.services.discovery import run_discovery  # noqa: E402
+from backend.app.services.link_vault import add_link, compose_tracked_url  # noqa: E402
 
 
 st.set_page_config(
@@ -43,7 +45,13 @@ def get_repo() -> ProductRepository:
     return ProductRepository()
 
 
+@st.cache_resource
+def get_link_repo() -> LinkRepository:
+    return LinkRepository()
+
+
 repo = get_repo()
+link_repo = get_link_repo()
 
 with st.sidebar:
     st.header("Discovery")
@@ -117,7 +125,9 @@ with st.sidebar:
                 st.warning(err)
 
 
-tab_top, tab_browse = st.tabs(["Top picks", "Browse persisted catalog"])
+tab_top, tab_browse, tab_links = st.tabs(
+    ["Top picks", "Browse persisted catalog", "Link Vault"]
+)
 
 with tab_top:
     result = st.session_state.get("last_result")
@@ -193,3 +203,119 @@ with tab_browse:
             for sp in persisted
         ]
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+with tab_links:
+    st.subheader("Stage 2 — Affiliate Link Vault")
+    st.caption(
+        "Central store for affiliate links. Track approval status per platform "
+        "and build tracked URLs with normalized UTM parameters."
+    )
+
+    col_add, col_filter = st.columns([2, 1])
+
+    with col_add:
+        with st.expander("Add a new affiliate link", expanded=False):
+            with st.form("add_link_form", clear_on_submit=True):
+                label = st.text_input("Label", placeholder="e.g. Curso X — Instagram bio")
+                raw_url = st.text_input("Affiliate URL", placeholder="https://hotmart.com/...")
+                new_platform = st.selectbox(
+                    "Platform",
+                    options=[p.value for p in Platform],
+                    format_func=lambda v: v.title(),
+                )
+                new_status = st.selectbox(
+                    "Approval status",
+                    options=[s.value for s in LinkStatus],
+                    format_func=lambda v: v.title(),
+                )
+                notes = st.text_area("Notes", placeholder="Producer approval date, restrictions, etc.")
+                tags_raw = st.text_input("Tags (comma-separated)", placeholder="instagram, bio, organic")
+                submitted = st.form_submit_button("Save link", type="primary")
+                if submitted:
+                    if not label or not raw_url:
+                        st.error("Label and URL are required.")
+                    else:
+                        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+                        add_link(
+                            link_repo,
+                            platform=Platform(new_platform),
+                            label=label,
+                            raw_url=raw_url,
+                            notes=notes,
+                            tags=tags,
+                            approval_status=LinkStatus(new_status),
+                        )
+                        st.success(f"Saved: {label}")
+                        st.rerun()
+
+    with col_filter:
+        status_filter = st.selectbox(
+            "Filter by status",
+            options=["(all)"] + [s.value for s in LinkStatus],
+            format_func=lambda v: v.title() if v != "(all)" else "All statuses",
+        )
+        platform_filter = st.selectbox(
+            "Filter by platform",
+            options=["(all)"] + [p.value for p in Platform],
+            format_func=lambda v: v.title() if v != "(all)" else "All platforms",
+        )
+
+    status_arg = LinkStatus(status_filter) if status_filter != "(all)" else None
+    platform_arg = Platform(platform_filter) if platform_filter != "(all)" else None
+    links = link_repo.list(status=status_arg, platform=platform_arg)
+
+    if not links:
+        st.info("No links in the vault yet. Add one above to get started.")
+    else:
+        for link in links:
+            status_color = {
+                LinkStatus.PENDING: ":orange[Pending]",
+                LinkStatus.APPROVED: ":green[Approved]",
+                LinkStatus.REJECTED: ":red[Rejected]",
+                LinkStatus.EXPIRED: ":gray[Expired]",
+            }[link.approval_status]
+
+            with st.container(border=True):
+                row_main, row_status = st.columns([3, 1])
+                with row_main:
+                    st.markdown(f"**{link.label}** · {link.platform.value.title()}")
+                    st.caption(f"{link.raw_url}")
+                    if link.tags:
+                        st.caption("Tags: " + ", ".join(f"`{t}`" for t in link.tags))
+                    if link.notes:
+                        st.caption(link.notes)
+                with row_status:
+                    st.markdown(status_color)
+                    new_status_val = st.selectbox(
+                        "Status",
+                        options=[s.value for s in LinkStatus],
+                        index=list(LinkStatus).index(link.approval_status),
+                        key=f"status_{link.id}",
+                        label_visibility="collapsed",
+                    )
+                    if new_status_val != link.approval_status.value:
+                        link_repo.set_status(link.id, LinkStatus(new_status_val))
+                        st.rerun()
+
+                with st.expander("Build tracked URL"):
+                    with st.form(f"utm_form_{link.id}"):
+                        c1, c2, c3 = st.columns(3)
+                        utm_source = c1.text_input("utm_source", value="instagram", key=f"src_{link.id}")
+                        utm_medium = c2.text_input("utm_medium", value="organic", key=f"med_{link.id}")
+                        utm_campaign = c3.text_input("utm_campaign", value="bio-link", key=f"camp_{link.id}")
+                        c4, c5 = st.columns(2)
+                        utm_term = c4.text_input("utm_term (optional)", key=f"term_{link.id}")
+                        utm_content = c5.text_input("utm_content (optional)", key=f"cont_{link.id}")
+                        build = st.form_submit_button("Build")
+                        if build:
+                            utm = UTMParams(
+                                source=utm_source,
+                                medium=utm_medium,
+                                campaign=utm_campaign,
+                                term=utm_term or None,
+                                content=utm_content or None,
+                            )
+                            tracked = compose_tracked_url(link, utm)
+                            st.code(tracked.final_url, language="text")
+                            st.caption("Values are normalized automatically — 'Instagram Bio' → 'instagram-bio'.")

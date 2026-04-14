@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from .api.links import router as links_router
 from .api.products import router as products_router
 
 app = FastAPI(
@@ -16,6 +17,7 @@ app = FastAPI(
 )
 
 app.include_router(products_router)
+app.include_router(links_router)
 
 
 @app.get("/health", tags=["meta"])
