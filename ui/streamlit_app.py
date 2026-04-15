@@ -1361,6 +1361,44 @@ with tab_traffic:
             sp.product for sp in persisted_products if sp.product.id == selected_id
         )
 
+        # --- Model tier selectors (affect Generate image/video below) ---
+        from backend.app.services.creatives import (  # noqa: E402
+            IMAGE_TIERS,
+            VIDEO_TIERS,
+        )
+
+        tier_col_img, tier_col_vid = st.columns(2)
+        with tier_col_img:
+            img_tier = st.selectbox(
+                "Qualidade da imagem",
+                options=list(IMAGE_TIERS.keys()),
+                index=1,  # default: balanceado
+                format_func=lambda k: f"{k.title()} — {IMAGE_TIERS[k]['cost_brl']}",
+                help=(
+                    "Todos os três tiers usam a família **Ideogram v3** porque é a "
+                    "única que renderiza texto em português dentro da imagem sem "
+                    "embaralhar letras. A diferença entre tiers é só velocidade / "
+                    "custo — qualidade do texto é igual nos três."
+                ),
+                key="tp_img_tier",
+            )
+            st.caption(IMAGE_TIERS[img_tier]["label"])
+        with tier_col_vid:
+            vid_tier = st.selectbox(
+                "Qualidade do vídeo",
+                options=list(VIDEO_TIERS.keys()),
+                index=1,  # default: balanceado
+                format_func=lambda k: f"{k.title()} — {VIDEO_TIERS[k]['cost_brl']}",
+                help=(
+                    "Três fornecedores distintos:\n"
+                    "- **Econômico** Minimax video-01 (6s fixo, 720p)\n"
+                    "- **Balanceado** Kling 1.6 Standard (5 ou 10s, aspect ratio)\n"
+                    "- **Premium** Google Veo 3 (8s, áudio nativo, SOTA)"
+                ),
+                key="tp_vid_tier",
+            )
+            st.caption(VIDEO_TIERS[vid_tier]["label"])
+
         # If a suggestion is pending from the previous run, inject it into the
         # widget's own state key BEFORE the widget is instantiated. Streamlit
         # forbids modifying widget state after creation, so the button writes
@@ -1578,11 +1616,20 @@ with tab_traffic:
                                             if not hasattr(gen, "generate_image"):
                                                 st.error("Nenhuma API de geração configurada.")
                                             else:
+                                                from backend.app.services.creatives import (
+                                                    image_model_for_tier,
+                                                )
+
                                                 provider = type(gen).__name__.replace("Generator", "")
-                                                with st.spinner(f"Gerando imagem via {provider}..."):
+                                                provider_key = "replicate" if provider.lower().startswith("replicate") else "fal"
+                                                chosen_model = image_model_for_tier(img_tier, provider_key)
+                                                with st.spinner(
+                                                    f"Gerando imagem via {provider} ({chosen_model})..."
+                                                ):
                                                     asset = gen.generate_image(
                                                         product_id=selected_product.id,
                                                         brief=brief,
+                                                        model_override=chosen_model,
                                                     )
                                                 creative_repo.insert(asset)
                                                 st.success(
@@ -1634,13 +1681,20 @@ with tab_traffic:
                                             if not hasattr(gen, "generate_video"):
                                                 st.error("Nenhuma API de geração configurada.")
                                             else:
+                                                from backend.app.services.creatives import (
+                                                    video_model_for_tier,
+                                                )
+
                                                 provider = type(gen).__name__.replace("Generator", "")
+                                                provider_key = "replicate" if provider.lower().startswith("replicate") else "fal"
+                                                chosen_model = video_model_for_tier(vid_tier, provider_key)
                                                 with st.spinner(
-                                                    f"Gerando vídeo via {provider} (2–5 minutos)..."
+                                                    f"Gerando vídeo via {provider} ({chosen_model}, 2–5 min)..."
                                                 ):
                                                     asset = gen.generate_video(
                                                         product_id=selected_product.id,
                                                         brief=brief,
+                                                        model_override=chosen_model,
                                                     )
                                                 creative_repo.insert(asset)
                                                 st.success(

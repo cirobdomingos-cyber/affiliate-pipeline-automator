@@ -29,13 +29,24 @@ class ReplicateError(RuntimeError):
 
 
 def _api_key() -> str:
+    # Force-reload .env on every call so the user can rotate the token
+    # without restarting Streamlit. override=True is deliberate: the
+    # .env file is the canonical source of truth.
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
+
     key = os.environ.get("REPLICATE_API_TOKEN") or os.environ.get("REPLICATE_API_KEY")
     if not key:
         raise ReplicateError(
             "REPLICATE_API_TOKEN is not set. Add it to .env and restart the app. "
             "Get a token at https://replicate.com/account/api-tokens."
         )
-    return key
+    # Strip trailing whitespace / newlines that sometimes sneak in when
+    # copy-pasting into a .env file via a text editor that adds a final \n.
+    return key.strip()
 
 
 def _headers() -> dict[str, str]:

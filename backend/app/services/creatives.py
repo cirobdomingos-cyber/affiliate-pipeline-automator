@@ -91,6 +91,73 @@ class PromptOnlyGenerator:
 _DEFAULT_IMAGE_MODEL = "fal-ai/ideogram/v3"
 _DEFAULT_VIDEO_MODEL = "fal-ai/veo3"
 
+
+# --- Operator-facing model tiers ------------------------------------------
+#
+# Exposed to the UI as a selector. Each tier maps to a specific model slug
+# on each provider. Ideogram v3 is used at all three image tiers because
+# nothing else on Replicate renders Portuguese headlines inside the image
+# reliably — the tiers trade off only speed/cost, not text quality. Video
+# tiers come from three different providers on purpose, giving the
+# operator real quality variety instead of three takes on the same model.
+#
+# Cost column is indicative for Brazilian billing (~April 2026) — the
+# actual bill is whatever Replicate or fal.ai charges at request time.
+
+IMAGE_TIERS: dict[str, dict[str, str]] = {
+    "economico": {
+        "label": "Econômico — rápido, ótimo para iterar briefs",
+        "cost_brl": "~R$ 0,10",
+        "replicate": "ideogram-ai/ideogram-v3-turbo",
+        "fal": "fal-ai/ideogram/v3/turbo",
+    },
+    "balanceado": {
+        "label": "Balanceado — qualidade/custo padrão",
+        "cost_brl": "~R$ 0,30",
+        "replicate": "ideogram-ai/ideogram-v3-balanced",
+        "fal": "fal-ai/ideogram/v3",
+    },
+    "premium": {
+        "label": "Premium — maior qualidade, render mais caro",
+        "cost_brl": "~R$ 0,50",
+        "replicate": "ideogram-ai/ideogram-v3-quality",
+        "fal": "fal-ai/ideogram/v3",
+    },
+}
+
+VIDEO_TIERS: dict[str, dict[str, str]] = {
+    "economico": {
+        "label": "Econômico — Minimax, 6s fixo 720p",
+        "cost_brl": "~R$ 1,50",
+        "replicate": "minimax/video-01",
+        "fal": "fal-ai/minimax-video",
+    },
+    "balanceado": {
+        "label": "Balanceado — Kling 1.6 Standard, 5 ou 10s",
+        "cost_brl": "~R$ 2,50",
+        "replicate": "kwaivgi/kling-v1.6-standard",
+        "fal": "fal-ai/kling-video/v1.6/standard/text-to-video",
+    },
+    "premium": {
+        "label": "Premium — Google Veo 3, 8s com áudio nativo",
+        "cost_brl": "~R$ 15,00",
+        "replicate": "google/veo-3",
+        "fal": "fal-ai/veo3",
+    },
+}
+
+
+def image_model_for_tier(tier: str, provider: str) -> str:
+    """Resolve a tier key ('economico' / 'balanceado' / 'premium') into
+    the provider-specific model slug. `provider` is 'replicate' or 'fal'."""
+    spec = IMAGE_TIERS.get(tier) or IMAGE_TIERS["balanceado"]
+    return spec.get(provider, spec["replicate"])
+
+
+def video_model_for_tier(tier: str, provider: str) -> str:
+    spec = VIDEO_TIERS.get(tier) or VIDEO_TIERS["balanceado"]
+    return spec.get(provider, spec["replicate"])
+
 # Best-effort per-call cost estimates in BRL. fal.ai pricing changes; we use
 # these only as a fallback when the response omits billing metadata.
 _IMAGE_FALLBACK_COST_BRL = 0.40
@@ -140,14 +207,19 @@ class FalAIGenerator:
 
     # --- image ---
     def generate_image(
-        self, *, product_id: str, brief: CreativeBrief
+        self,
+        *,
+        product_id: str,
+        brief: CreativeBrief,
+        model_override: str | None = None,
     ) -> GeneratedCreative:
+        model = model_override or self._image_model
         payload = {
             "prompt": brief.image_prompt,
             "aspect_ratio": brief.aspect_ratio,
             "rendering_speed": "BALANCED",
         }
-        result = fal.run_sync(self._image_model, payload)
+        result = fal.run_sync(model, payload)
         url, width, height, cost = _extract_image_fields(result)
         asset = GeneratedCreative(
             id=str(uuid.uuid4()),
@@ -156,7 +228,7 @@ class FalAIGenerator:
             kind="image",
             asset_url=url,
             source_prompt=brief.image_prompt,
-            model=self._image_model,
+            model=model,
             cost_brl=cost if cost is not None else _IMAGE_FALLBACK_COST_BRL,
             width=width,
             height=height,
@@ -166,15 +238,20 @@ class FalAIGenerator:
 
     # --- video ---
     def generate_video(
-        self, *, product_id: str, brief: CreativeBrief
+        self,
+        *,
+        product_id: str,
+        brief: CreativeBrief,
+        model_override: str | None = None,
     ) -> GeneratedCreative:
+        model = model_override or self._video_model
         payload = {
             "prompt": brief.video_prompt,
             "aspect_ratio": brief.aspect_ratio,
             "duration": f"{brief.video_duration_s}s",
         }
         result = fal.run_queued(
-            self._video_model,
+            model,
             payload,
             poll_interval_s=3.0,
             max_wait_s=360.0,
@@ -187,7 +264,7 @@ class FalAIGenerator:
             kind="video",
             asset_url=url,
             source_prompt=brief.video_prompt,
-            model=self._video_model,
+            model=model,
             cost_brl=cost if cost is not None else _VIDEO_FALLBACK_COST_BRL,
             duration_s=brief.video_duration_s,
             generated_at=datetime.now(timezone.utc),
@@ -303,8 +380,13 @@ class ReplicateGenerator:
         )
 
     def generate_image(
-        self, *, product_id: str, brief: CreativeBrief
+        self,
+        *,
+        product_id: str,
+        brief: CreativeBrief,
+        model_override: str | None = None,
     ) -> GeneratedCreative:
+        model = model_override or self._image_model
         # Model-agnostic minimal payload. Every image model on Replicate
         # accepts `prompt` and `aspect_ratio`; extras (output_format,
         # safety_tolerance, style_type) vary and trip 422s.
@@ -312,7 +394,7 @@ class ReplicateGenerator:
             "prompt": brief.image_prompt,
             "aspect_ratio": brief.aspect_ratio,
         }
-        result = replicate.run(self._image_model, payload)
+        result = replicate.run(model, payload)
         url = _first_url(result.get("output"))
         if not url:
             raise replicate.ReplicateError(
@@ -325,17 +407,22 @@ class ReplicateGenerator:
             kind="image",
             asset_url=url,
             source_prompt=brief.image_prompt,
-            model=f"replicate/{self._image_model}",
+            model=f"replicate/{model}",
             cost_brl=_IMAGE_FALLBACK_COST_BRL,
             generated_at=datetime.now(timezone.utc),
         )
 
     def generate_video(
-        self, *, product_id: str, brief: CreativeBrief
+        self,
+        *,
+        product_id: str,
+        brief: CreativeBrief,
+        model_override: str | None = None,
     ) -> GeneratedCreative:
-        payload = _build_video_payload(self._video_model, brief)
+        model = model_override or self._video_model
+        payload = _build_video_payload(model, brief)
         result = replicate.run(
-            self._video_model,
+            model,
             payload,
             poll_interval_s=5.0,
             max_wait_s=600.0,  # Veo 3 can take 2–5 minutes
@@ -352,7 +439,7 @@ class ReplicateGenerator:
             kind="video",
             asset_url=url,
             source_prompt=brief.video_prompt,
-            model=f"replicate/{self._video_model}",
+            model=f"replicate/{model}",
             cost_brl=_VIDEO_FALLBACK_COST_BRL,
             duration_s=brief.video_duration_s,
             generated_at=datetime.now(timezone.utc),
@@ -423,15 +510,19 @@ def build_default_creative_generator() -> CreativeGenerator:
     If both are set, Replicate wins. Override with `CREATIVE_PROVIDER=fal`
     or `CREATIVE_PROVIDER=replicate` to force a specific provider.
     """
-    # Load .env *before* reading provider env vars. The other builders call
-    # load_dotenv too, but the env var check in this function has to happen
-    # first, so we can't rely on them. Idempotent, cheap, override=False so
-    # shell-exported values still win.
+    # Load .env *before* reading provider env vars. override=True so the
+    # .env file is the source of truth for creative-generation API keys —
+    # if Streamlit was started with a stale REPLICATE_API_TOKEN in its
+    # shell environment (e.g. from a previous session where the token
+    # was rotated), we would otherwise send the stale value to Replicate
+    # and get a 401. Reloading from .env on every generator construction
+    # means the user can rotate the key by editing .env without
+    # restarting Streamlit.
     from pathlib import Path
 
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
 
     from ..traffic_planner import build_default_traffic_planner
 
