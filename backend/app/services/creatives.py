@@ -164,6 +164,32 @@ _IMAGE_FALLBACK_COST_BRL = 0.40
 _VIDEO_FALLBACK_COST_BRL = 15.00  # Veo 3 default; actual varies by model
 
 
+def _estimate_image_cost(model: str) -> float:
+    """Best-effort cost estimate when the provider response omits
+    billing metadata. Uses the model slug to pick the tier rate."""
+    slug = model.lower()
+    if "turbo" in slug:
+        return 0.10
+    if "quality" in slug:
+        return 0.50
+    if "balanced" in slug:
+        return 0.30
+    return _IMAGE_FALLBACK_COST_BRL
+
+
+def _estimate_video_cost(model: str) -> float:
+    slug = model.lower()
+    if "veo" in slug:
+        return 15.00
+    if "kling-v1.6-pro" in slug:
+        return 4.00
+    if "kling" in slug:
+        return 2.50
+    if "minimax" in slug:
+        return 1.50
+    return _VIDEO_FALLBACK_COST_BRL
+
+
 class FalAIGenerator:
     """Direct image/video generation via fal.ai.
 
@@ -229,7 +255,7 @@ class FalAIGenerator:
             asset_url=url,
             source_prompt=brief.image_prompt,
             model=model,
-            cost_brl=cost if cost is not None else _IMAGE_FALLBACK_COST_BRL,
+            cost_brl=cost if cost is not None else _estimate_image_cost(model),
             width=width,
             height=height,
             generated_at=datetime.now(timezone.utc),
@@ -265,7 +291,7 @@ class FalAIGenerator:
             asset_url=url,
             source_prompt=brief.video_prompt,
             model=model,
-            cost_brl=cost if cost is not None else _VIDEO_FALLBACK_COST_BRL,
+            cost_brl=cost if cost is not None else _estimate_video_cost(model),
             duration_s=brief.video_duration_s,
             generated_at=datetime.now(timezone.utc),
         )
@@ -408,7 +434,7 @@ class ReplicateGenerator:
             asset_url=url,
             source_prompt=brief.image_prompt,
             model=f"replicate/{model}",
-            cost_brl=_IMAGE_FALLBACK_COST_BRL,
+            cost_brl=_estimate_image_cost(model),
             generated_at=datetime.now(timezone.utc),
         )
 
@@ -440,7 +466,7 @@ class ReplicateGenerator:
             asset_url=url,
             source_prompt=brief.video_prompt,
             model=f"replicate/{model}",
-            cost_brl=_VIDEO_FALLBACK_COST_BRL,
+            cost_brl=_estimate_video_cost(model),
             duration_s=brief.video_duration_s,
             generated_at=datetime.now(timezone.utc),
         )

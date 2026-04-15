@@ -1656,6 +1656,13 @@ with tab_traffic:
                                         )
                                         + f"[Abrir ↗]({latest_image.asset_url})"
                                     )
+                                    if st.button(
+                                        "🗑 Excluir imagem",
+                                        key=f"delimg_{i}",
+                                        help="Remove esta imagem do histórico para regenerar com outro tier.",
+                                    ):
+                                        creative_repo.delete(latest_image.id)
+                                        st.rerun()
 
                             st.divider()
 
@@ -1717,3 +1724,10 @@ with tab_traffic:
                                         )
                                         + f"[Abrir ↗]({latest_video.asset_url})"
                                     )
+                                    if st.button(
+                                        "🗑 Excluir vídeo",
+                                        key=f"delvid_{i}",
+                                        help="Remove este vídeo do histórico para regenerar com outro tier.",
+                                    ):
+                                        creative_repo.delete(latest_video.id)
+                                        st.rerun()
